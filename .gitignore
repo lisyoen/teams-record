@@ -1,0 +1,29 @@
+# 비밀/키 — 절대 커밋 금지
+*.key
+*.store
+secrets/
+keys/
+passphrase*
+*.sqlcipher-key
+
+# 추출된 메시지 데이터 / DB 스냅샷 — 커밋 금지 (로컬 전용)
+data/
+dumps/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+pictures/
+attachments/
+
+# 일반
+node_modules/
+__pycache__/
+*.pyc
+.env
+.env.*
+*.log
+.DS_Store
+dist/
+build/
