@@ -31,3 +31,8 @@ config_<dbhash>.store → CryptoJS.AES.decrypt(store, P) → SQLCipher 키 K
 
 ## 상태
 기획중 — 키 회수 PoC 예정. 상세 기획/현황은 spark-home craftbay-docs `proposals/teams-record.md`, `settings/projects/teams-record.md`.
+
+## 로컬 뷰어 UI 디자인
+
+- 스펙: `design/viewer-ui-design.md`
+- 레퍼런스 스크린샷: `design/assets/` (1:1 대화 목록 / 워크스페이스-채널 트리 / 메시지 이모지 반응)
