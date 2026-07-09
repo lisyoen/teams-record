@@ -267,7 +267,7 @@ function mediaCard(md,mine){
   if(md.kind==='image'){
     const c=div('imgcard');
     const th=div('thumb');
-    const ig=div('ig');ig.textContent='\uD83D\uDDBC';
+    const ig=div('ig');ig.textContent=String.fromCodePoint(0x1F5BC);
     const inm=div('in');inm.textContent=md.name;
     const sz=div('fsize');sz.textContent=fmtSize(md.size);
     th.appendChild(ig);th.appendChild(inm);if(sz.textContent)th.appendChild(sz);
