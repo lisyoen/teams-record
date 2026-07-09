@@ -4,7 +4,7 @@
 - Data source: D:\\git\\teams-db\\teams-decrypted.db (plaintext SQLite snapshot, read-only).
 - UI spec: teams-record repo design/viewer-ui-design.md (commit 6e2f93e) + assets/04 bubble layout.
 """
-import json, os, re, sqlite3
+import json, os, re, sqlite3, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -15,6 +15,8 @@ _SNAPSHOT = r'D:\git\teams-db\teams-decrypted.db'
 DB = _ARCHIVE if os.path.exists(_ARCHIVE) else _SNAPSHOT
 PORT = 8799
 MY_ID = '754107854600802305'
+REFRESH_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'refresh_archive.bat')
+_REFRESH_LOCK = threading.Lock()
 CMD_RE = re.compile(r'^\s*<!--.*?-->\s*', re.S)
 
 def db():
@@ -228,6 +230,10 @@ PAGE = '''<!doctype html>
 body{margin:0;font-family:'Malgun Gothic','Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;color:#222}
 header{display:flex;align-items:center;gap:20px;padding:6px 16px;border-bottom:1px solid #ddd;background:#fff}
 header h1{font-size:15px;margin:0;color:#334}
+.refbtn{margin-left:auto;border:1px solid #cdd6e4;background:#f2f6fc;color:#1a73e8;border-radius:6px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
+.refbtn:hover{background:#e6eefb}
+.refbtn:disabled{opacity:.55;cursor:default}
+.rstat{font-size:12px;color:#889;white-space:nowrap}
 nav button{border:0;background:none;padding:9px 12px;font-size:14px;cursor:pointer;color:#888;border-bottom:2px solid transparent}
 nav button.on{color:#1a73e8;border-bottom-color:#1a73e8;font-weight:bold}
 main{flex:1;display:flex;min-height:0}
@@ -284,7 +290,7 @@ main{flex:1;display:flex;min-height:0}
 .empty{color:#99a;text-align:center;margin-top:40px;font-size:13px}
 </style></head><body>
 <header><h1>Teams Record Viewer</h1>
-<nav><button id="tabKt" class="on">워크스페이스-채널</button><button id="tabKm">1:1 대화</button></nav>
+<nav><button id="tabKt" class="on">워크스페이스-채널</button><button id="tabKm">1:1 대화</button></nav><span id="rstat" class="rstat"></span><button id="btnRefresh" class="refbtn" title="라이브 DB를 스냅샷·복호화해 누적 아카이브에 최신 내용을 append합니다">↻ 새로고침</button>
 </header>
 <main><aside id="list"></aside>
 <section id="msgs"><div id="msgHead"></div><div id="msgBody"><div class="empty">좌측에서 채널 또는 대화를 선택하세요</div></div></section>
@@ -463,13 +469,30 @@ document.addEventListener('click',()=>{$('#pop').hidden=true;hideReMenu();});
 function setTab(k){
   $('#tabKt').classList.toggle('on',k==='kt');
   $('#tabKm').classList.toggle('on',k==='km');
-  selEl=null;
+  selEl=null;CURTAB=k;
   if(k==='kt')renderKt();else renderKm();
   $('#msgHead').textContent='';
   $('#msgBody').innerHTML='<div class="empty">좌측에서 채널 또는 대화를 선택하세요</div>';
 }
 $('#tabKt').onclick=()=>setTab('kt');
 $('#tabKm').onclick=()=>setTab('km');
+let CURTAB='kt';
+async function doRefresh(){
+  const btn=$('#btnRefresh'),st=$('#rstat');
+  btn.disabled=true;st.textContent='갱신 중… (복호화·병합, 수십초 소요)';
+  try{
+    const r=await fetch('/api/refresh',{method:'POST'});
+    const j=await r.json();
+    if(j.ok){
+      B=await (await fetch('/api/bootstrap')).json();MY=B.my;
+      if(CURTAB==='kt')renderKt();else renderKm();
+      st.textContent='갱신 완료 '+(j.at||'');
+    }else{st.textContent='실패: '+(j.error||'unknown');}
+  }catch(e){st.textContent='오류: '+e;}
+  btn.disabled=false;
+  setTimeout(()=>{if(!btn.disabled)st.textContent='';},8000);
+}
+$('#btnRefresh').onclick=doRefresh;
 (async()=>{B=await (await fetch('/api/bootstrap')).json();MY=B.my;renderKt();})();
 </script></body></html>'''
 
@@ -485,6 +508,35 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Pragma', 'no-cache')
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        u = urlparse(self.path)
+        if u.path == '/api/refresh':
+            if not _REFRESH_LOCK.acquire(blocking=False):
+                self._send(json.dumps({'ok': False, 'error': '\uc774\ubbf8 \uac31\uc2e0 \uc911\uc785\ub2c8\ub2e4'}).encode('utf-8'),
+                           'application/json; charset=utf-8')
+                return
+            try:
+                proc = subprocess.run(['cmd', '/c', REFRESH_BAT], capture_output=True,
+                                      text=True, timeout=600,
+                                      cwd=os.path.dirname(REFRESH_BAT))
+                ok = proc.returncode == 0
+                import datetime as _dt
+                at = _dt.datetime.now().strftime('%H:%M:%S')
+                tail = (proc.stdout or '').strip().replace('\n', ' ')[-200:]
+                err = None if ok else ('exit %d: %s' % (proc.returncode, tail))
+                self._send(json.dumps({'ok': ok, 'at': at, 'error': err}).encode('utf-8'),
+                           'application/json; charset=utf-8')
+            except subprocess.TimeoutExpired:
+                self._send(json.dumps({'ok': False, 'error': '\uc2dc\uac04 \ucd08\uacfc(600s)'}).encode('utf-8'),
+                           'application/json; charset=utf-8')
+            except Exception as e:
+                self._send(json.dumps({'ok': False, 'error': str(e)[:200]}).encode('utf-8'),
+                           'application/json; charset=utf-8')
+            finally:
+                _REFRESH_LOCK.release()
+        else:
+            self.send_error(404)
 
     def do_GET(self):
         try:
