@@ -61,10 +61,25 @@ def parse_reactions(ri):
         pass
     return out
 
+def parse_media(content):
+    """MessageType 13 = media/file attachment JSON (media.type file|image)."""
+    if not content:
+        return None
+    try:
+        m = json.loads(content).get('media') or {}
+    except Exception:
+        return None
+    if not m.get('filename') and not m.get('url'):
+        return None
+    return {'kind': m.get('type'), 'ext': (m.get('extension') or '').lower(),
+            'name': m.get('filename') or m.get('info') or '(파일)',
+            'size': m.get('size'), 'url': m.get('url'), 'fid': m.get('espFileId')}
+
+
 def norm(r, kind):
     m = {'id': r.get('MessageId'), 't': r.get('SentTime'), 's': str(r.get('Sender') or ''),
          'txt': clean(r.get('Content')), 're': parse_reactions(r.get('ReactionInfo')),
-         'sys': None, 'label': None}
+         'sys': None, 'label': None, 'media': None}
     if r.get('Recalled'):
         m['sys'] = '회수된 메시지입니다'
     if kind == 'kt' and r.get('Deleted'):
@@ -72,7 +87,14 @@ def norm(r, kind):
     if kind == 'km' and r.get('DeleteRequesterId'):
         m['sys'] = '삭제된 메시지입니다'
     mt = r.get('MessageType')
-    if mt not in (0, None):
+    if mt == 13:
+        media = parse_media(r.get('Content'))
+        if media:
+            m['media'] = media
+            m['txt'] = ''
+        else:
+            m['label'] = '[미디어]'
+    elif mt not in (0, None):
         if r.get('FileName'):
             m['label'] = '[파일] ' + str(r['FileName'])
         else:
@@ -159,6 +181,19 @@ main{flex:1;display:flex;min-height:0}
 .reacts.r{justify-content:flex-end}
 .chip{background:#fff;border:1px solid #dfe3e8;border-radius:12px;padding:1px 8px;font-size:12px;cursor:pointer;user-select:none}
 .chip.mymark{border-color:#1a73e8;background:#e8f1fd}
+.mediacard{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:9px 12px;max-width:340px;cursor:default;text-decoration:none;color:#223}
+.bubble.me + .mediacard,.mrow.mine .mediacard{background:#d3e9ff;border-color:#bcd8f5}
+.mediacard .fico{width:38px;height:38px;border-radius:8px;background:#eef1f6;color:#5a6b86;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none;text-transform:uppercase}
+.mediacard .fmeta{min-width:0}
+.mediacard .fname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:250px}
+.mediacard .fsize{font-size:11px;color:#8a94a3;margin-top:2px}
+.imgcard{max-width:340px}
+.imgcard .thumb{width:100%;max-width:340px;border-radius:12px;border:1px solid #e3e6ea;background:#eef1f6;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#7a879a;gap:6px;padding:20px 12px;text-align:center}
+.imgcard .thumb .ig{font-size:26px}
+.imgcard .thumb .in{font-size:12px;word-break:break-word}
+.remenu{position:absolute;background:#2b2f36;color:#fff;border-radius:8px;padding:8px 10px;font-size:12px;z-index:20;max-width:240px;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:none}
+.remenu .rh{font-size:11px;color:#b9c2cf;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+.remenu .rn{padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #pop{position:absolute;background:#333;color:#fff;padding:8px 10px;border-radius:6px;font-size:12px;max-width:260px;z-index:9;white-space:pre-wrap}
 .empty{color:#99a;text-align:center;margin-top:40px;font-size:13px}
 </style></head><body>
@@ -169,6 +204,7 @@ main{flex:1;display:flex;min-height:0}
 <section id="msgs"><div id="msgHead"></div><div id="msgBody"><div class="empty">좌측에서 채널 또는 대화를 선택하세요</div></div></section>
 </main>
 <div id="pop" hidden></div>
+<div id="remenu" class="remenu" hidden></div>
 <script>
 let B=null,MY='',selEl=null;
 const $=s=>document.querySelector(s);
@@ -221,25 +257,58 @@ async function openConv(kind,id,title){
   const ms=await (await fetch('/api/messages?kind='+kind+'&id='+encodeURIComponent(id))).json();
   renderMsgs(ms);
 }
+function fmtSize(n){
+  if(!n&&n!==0)return'';
+  if(n<1024)return n+' B';
+  if(n<1048576)return (n/1024).toFixed(0)+' KB';
+  return (n/1048576).toFixed(1)+' MB';
+}
+function mediaCard(md,mine){
+  if(md.kind==='image'){
+    const c=div('imgcard');
+    const th=div('thumb');
+    const ig=div('ig');ig.textContent='\uD83D\uDDBC';
+    const inm=div('in');inm.textContent=md.name;
+    const sz=div('fsize');sz.textContent=fmtSize(md.size);
+    th.appendChild(ig);th.appendChild(inm);if(sz.textContent)th.appendChild(sz);
+    c.appendChild(th);
+    return c;
+  }
+  const c=div('mediacard');
+  const ic=div('fico');ic.textContent=(md.ext||'file').slice(0,4);
+  const meta=div('fmeta');
+  meta.appendChild(divT('fname',md.name));
+  const sz=fmtSize(md.size);if(sz)meta.appendChild(divT('fsize',sz));
+  c.appendChild(ic);c.appendChild(meta);
+  return c;
+}
 function bubbleWrap(m,next,mine){
   const out=div('bout');
   const wrap=div('bwrap');
-  const b=div('bubble'+(mine?' me':''));
-  b.textContent=(m.label?m.label+(m.txt?'\\n':''):'')+(m.txt||'')||'(내용 없음)';
+  let contentEl;
+  if(m.media){
+    contentEl=mediaCard(m.media,mine);
+  }else{
+    contentEl=div('bubble'+(mine?' me':''));
+    contentEl.textContent=(m.label?m.label+(m.txt?'\n':''):'')+(m.txt||'')||'(내용 없음)';
+  }
   let showT=true;
   if(next&&!next.sys&&next.s===m.s&&m.t&&next.t&&sameMin(m.t,next.t))showT=false;
   const t=div('mtime');t.textContent=(showT&&m.t)?fmtT(m.t):'';
-  if(mine){wrap.appendChild(t);wrap.appendChild(b);}else{wrap.appendChild(b);wrap.appendChild(t);}
+  if(mine){wrap.appendChild(t);wrap.appendChild(contentEl);}else{wrap.appendChild(contentEl);wrap.appendChild(t);}
   out.appendChild(wrap);
   if(m.re&&m.re.length){
     const rc=div('reacts'+(mine?' r':''));
     for(const r of m.re){
       const chip=document.createElement('span');
       chip.className='chip'+(r.m?' mymark':'');
-      chip.textContent=(EMOJI[r.e]||('#'+r.e))+' '+r.c;
-      const names=(r.u||[]).map(nm).join(', ');
-      chip.title=names;
-      chip.onclick=ev=>{ev.stopPropagation();showPop(ev,names||'(반응자 정보 없음)');};
+      const glyph=EMOJI[r.e]||('#'+r.e);
+      chip.textContent=glyph+' '+r.c;
+      const names=(r.u||[]).map(nm);
+      chip.onmouseenter=ev=>showReMenu(ev,glyph,names);
+      chip.onmousemove=ev=>positionReMenu(ev);
+      chip.onmouseleave=()=>hideReMenu();
+      chip.onclick=ev=>{ev.stopPropagation();showReMenu(ev,glyph,names);};
       rc.appendChild(chip);
     }
     out.appendChild(rc);
@@ -279,7 +348,32 @@ function showPop(ev,text){
   p.style.left=Math.min(ev.pageX,window.innerWidth-280)+'px';
   p.style.top=(ev.pageY+8)+'px';
 }
-document.addEventListener('click',()=>{$('#pop').hidden=true;});
+function showReMenu(ev,glyph,names){
+  const el=$('#remenu');
+  el.innerHTML='';
+  const h=div('rh');
+  h.textContent=glyph+' '+names.length+'\uBA85';
+  el.appendChild(h);
+  if(names.length){
+    for(const n of names){el.appendChild(divT('rn',n));}
+  }else{
+    el.appendChild(divT('rn','(\uBC18\uC751\uC790 \uC815\uBCF4 \uC5C6\uC74C)'));
+  }
+  el.hidden=false;
+  positionReMenu(ev);
+}
+function positionReMenu(ev){
+  const el=$('#remenu');
+  if(el.hidden)return;
+  const w=el.offsetWidth||200,h=el.offsetHeight||60;
+  let x=ev.pageX+12,y=ev.pageY+12;
+  if(x+w>window.innerWidth-8)x=ev.pageX-w-12;
+  if(y+h>window.innerHeight-8)y=ev.pageY-h-12;
+  el.style.left=Math.max(8,x)+'px';
+  el.style.top=Math.max(8,y)+'px';
+}
+function hideReMenu(){$('#remenu').hidden=true;}
+document.addEventListener('click',()=>{$('#pop').hidden=true;hideReMenu();});
 function setTab(k){
   $('#tabKt').classList.toggle('on',k==='kt');
   $('#tabKm').classList.toggle('on',k==='km');
