@@ -290,7 +290,7 @@ function bubbleWrap(m,next,mine){
     contentEl=mediaCard(m.media,mine);
   }else{
     contentEl=div('bubble'+(mine?' me':''));
-    contentEl.textContent=(m.label?m.label+(m.txt?'\n':''):'')+(m.txt||'')||'(내용 없음)';
+    contentEl.textContent=(m.label?m.label+(m.txt?'\\n':''):'')+(m.txt||'')||'(내용 없음)';
   }
   let showT=true;
   if(next&&!next.sys&&next.s===m.s&&m.t&&next.t&&sameMin(m.t,next.t))showT=false;
@@ -395,6 +395,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
         self.end_headers()
         self.wfile.write(body)
 
