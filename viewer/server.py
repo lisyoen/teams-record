@@ -4,11 +4,15 @@
 - Data source: D:\\git\\teams-db\\teams-decrypted.db (plaintext SQLite snapshot, read-only).
 - UI spec: teams-record repo design/viewer-ui-design.md (commit 6e2f93e) + assets/04 bubble layout.
 """
-import json, re, sqlite3
+import json, os, re, sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-DB = r'D:\git\teams-db\teams-decrypted.db'
+# Prefer cumulative archive (retains messages aged out of live DB); fall back to
+# the single-shot decrypted snapshot.
+_ARCHIVE = r'D:\git\teams-db\teams-archive.db'
+_SNAPSHOT = r'D:\git\teams-db\teams-decrypted.db'
+DB = _ARCHIVE if os.path.exists(_ARCHIVE) else _SNAPSHOT
 PORT = 8799
 MY_ID = '754107854600802305'
 CMD_RE = re.compile(r'^\s*<!--.*?-->\s*', re.S)

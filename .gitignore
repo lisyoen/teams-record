@@ -27,3 +27,7 @@ __pycache__/
 .DS_Store
 dist/
 build/
+# 아카이브(누적) DB — 실제 대화 본문, 커밋 금지
+teams-archive.db
+*.b64
+boot.json

@@ -1,4 +1,6 @@
 @echo off
+REM Refresh cumulative archive from live DB, then open the viewer.
+call D:\git\teams-db\viewer\refresh_archive.bat
 cd /d D:\git\teams-db\viewer
 start "teams-viewer" /min python server.py
 timeout /t 1 /nobreak >nul
