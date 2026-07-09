@@ -76,6 +76,75 @@ def parse_media(content):
             'size': m.get('size'), 'url': m.get('url'), 'fid': m.get('espFileId')}
 
 
+def _dn(uid, data1=None):
+    """Display name for a system-event participant."""
+    sid = '' if uid is None else str(uid)
+    name = (data1 or '').strip()
+    if sid == MY_ID:
+        return (name or '이창연') + ' (AI 서비스 에이전트)'
+    return name or sid
+
+
+def parse_system4(content, sender):
+    """MessageType 4 = channel participation system events (ENTER/LEAVE/EXPELLED/TITLE/CUSTOM_NOTI)."""
+    try:
+        arr = json.loads(content or '[]')
+    except Exception:
+        return None, '[시스템 메시지]'
+    if not isinstance(arr, list):
+        return None, '[시스템 메시지]'
+
+    def np(name):
+        return name + '님'
+
+    sender = '' if sender is None else str(sender)
+    lines = []
+    enters = []
+    for e in arr:
+        if not isinstance(e, dict):
+            continue
+        et = e.get('type')
+        if et == 'ENTER':
+            enters.append(e)
+        elif et == 'LEAVE':
+            lines.append(np(_dn(e.get('userId'), e.get('data1'))) + '이 나갔습니다.')
+        elif et == 'EXPELLED':
+            actor = _dn(e.get('data2'), e.get('data3'))
+            target = _dn(e.get('userId'), e.get('data1'))
+            lines.append(np(actor) + '이 ' + np(target) + '을 내보냈습니다.')
+        elif et == 'CHATROOM_TITLE_UPDATED':
+            actor = _dn(e.get('userId'), e.get('data1'))
+            title = (e.get('data2') or '').strip()
+            lines.append(np(actor) + "이 대화방 이름을 '" + title + "'(으)로 변경했습니다.")
+        elif et == 'CUSTOM_NOTI':
+            noti = (e.get('data3') or e.get('data2') or '').strip()
+            if noti:
+                lines.append(noti)
+    if enters:
+        invitees = []
+        for e in enters:
+            if str(e.get('userId')) == sender:
+                continue
+            name = _dn(e.get('userId'), e.get('data1'))
+            if name and name not in invitees:
+                invitees.append(name)
+        inviter_data1 = None
+        for e in enters:
+            if str(e.get('userId')) == sender:
+                inviter_data1 = e.get('data1')
+                break
+        inviter = _dn(sender, inviter_data1)
+        if invitees:
+            names = ', '.join(np(n) for n in invitees)
+            enter_line = np(inviter) + '이 ' + names + '을 초대했습니다.'
+        else:
+            enter_line = np(inviter) + '이 참여했습니다.'
+        lines.insert(0, enter_line)
+    if not lines:
+        return None, '[시스템 메시지]'
+    return '\n'.join(lines), None
+
+
 def norm(r, kind):
     m = {'id': r.get('MessageId'), 't': r.get('SentTime'), 's': str(r.get('Sender') or ''),
          'txt': clean(r.get('Content')), 're': parse_reactions(r.get('ReactionInfo')),
@@ -87,7 +156,10 @@ def norm(r, kind):
     if kind == 'km' and r.get('DeleteRequesterId'):
         m['sys'] = '삭제된 메시지입니다'
     mt = r.get('MessageType')
-    if mt == 13:
+    if mt == 4:
+        m['sys'], m['label'] = parse_system4(r.get('Content'), r.get('Sender'))
+        m['txt'] = ''
+    elif mt == 13:
         media = parse_media(r.get('Content'))
         if media:
             m['media'] = media

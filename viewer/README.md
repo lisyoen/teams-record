@@ -33,4 +33,9 @@ UI 정본 스펙은 `../design/viewer-ui-design.md`.
 - 1:1 대화(km): TB_KmMessage + TB_Chatroom(Title) + TB_KmContact(LocalName).
 - 발신자 = Sender → TB_KtContact/TB_KmContact.LocalName. 본인 UserID=754107854600802305 → 우측 버블.
 - SentTime = epoch ms → KST. Content 의 `<!-- {COMMAND} -->` 프리픽스 제거. Recalled/Deleted → 시스템 라인.
+- MessageType=4 참여/이탈 시스템 이벤트(초대/퇴장/강퇴/방제변경/커스텀 알림) → 중앙 시스템 라인.
 - 이모지 글리프 매핑(`emoji` 정수 → 글리프)은 server.py 상단 `EMOJI` 테이블 잠정값. 미확정 코드는 `#N` 폴백. 라이브 앱 대조로 확정 예정.
+
+## 진행 이력
+
+- 2026-07-09: MessageType=4 시스템 이벤트(초대/퇴장/강퇴/방제변경/커스텀 알림)를 중앙 시스템 라인으로 렌더링.
