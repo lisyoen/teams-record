@@ -17,6 +17,7 @@ PORT = 8799
 MY_ID = '754107854600802305'
 REFRESH_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'refresh_archive.bat')
 _REFRESH_LOCK = threading.Lock()
+THUMBS_DIR = r'D:\git\teams-db\thumbs'
 CMD_RE = re.compile(r'^\s*<!--.*?-->\s*', re.S)
 
 def db():
@@ -223,6 +224,31 @@ def api_messages(kind, cid):
                  'WHERE ChatroomId=? ORDER BY SentTime', (cid,))
     return [norm(r, kind) for r in rows]
 
+def read_thumb(fid):
+    """Return (bytes, content_type) for a locally-cached thumbnail, or (None, None)."""
+    if not fid or not re.match(r'^[0-9A-Za-z_-]{1,64}$', fid):
+        return None, None
+    path = os.path.join(THUMBS_DIR, fid)
+    if not os.path.isfile(path):
+        return None, None
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+    except Exception:
+        return None, None
+    if data[:3] == b'\xff\xd8\xff':
+        ctype = 'image/jpeg'
+    elif data[:4] == b'\x89PNG':
+        ctype = 'image/png'
+    elif data[:3] == b'GIF':
+        ctype = 'image/gif'
+    elif data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        ctype = 'image/webp'
+    else:
+        ctype = 'application/octet-stream'
+    return data, ctype
+
+
 PAGE = '''<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><title>Teams Record Viewer</title>
 <style>
@@ -283,6 +309,7 @@ main{flex:1;display:flex;min-height:0}
 .imgcard .thumb{width:100%;max-width:340px;border-radius:12px;border:1px solid #e3e6ea;background:#eef1f6;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#7a879a;gap:6px;padding:20px 12px;text-align:center}
 .imgcard .thumb .ig{font-size:26px}
 .imgcard .thumb .in{font-size:12px;word-break:break-word}
+.imgcard .thumbimg{width:100%;max-width:340px;border-radius:12px;border:1px solid #e3e6ea;display:block;cursor:pointer}
 .remenu{position:absolute;background:#2b2f36;color:#fff;border-radius:8px;padding:8px 10px;font-size:12px;z-index:20;max-width:240px;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:none}
 .remenu .rh{font-size:11px;color:#b9c2cf;margin-bottom:5px;display:flex;align-items:center;gap:6px}
 .remenu .rn{padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -355,15 +382,26 @@ function fmtSize(n){
   if(n<1048576)return (n/1024).toFixed(0)+' KB';
   return (n/1048576).toFixed(1)+' MB';
 }
+function imgFallback(md){
+  const th=div('thumb');
+  const ig=div('ig');ig.textContent=String.fromCodePoint(0x1F5BC);
+  const inm=div('in');inm.textContent=md.name;
+  const sz=div('fsize');sz.textContent=fmtSize(md.size);
+  th.appendChild(ig);th.appendChild(inm);if(sz.textContent)th.appendChild(sz);
+  return th;
+}
 function mediaCard(md,mine){
   if(md.kind==='image'){
     const c=div('imgcard');
-    const th=div('thumb');
-    const ig=div('ig');ig.textContent=String.fromCodePoint(0x1F5BC);
-    const inm=div('in');inm.textContent=md.name;
-    const sz=div('fsize');sz.textContent=fmtSize(md.size);
-    th.appendChild(ig);th.appendChild(inm);if(sz.textContent)th.appendChild(sz);
-    c.appendChild(th);
+    if(md.fid){
+      const img=document.createElement('img');
+      img.className='thumbimg';img.src='/thumb/'+encodeURIComponent(md.fid);
+      img.alt=md.name||'';img.loading='lazy';
+      img.onerror=()=>{img.remove();c.appendChild(imgFallback(md));};
+      c.appendChild(img);
+    }else{
+      c.appendChild(imgFallback(md));
+    }
     return c;
   }
   const c=div('mediacard');
@@ -554,6 +592,18 @@ class H(BaseHTTPRequestHandler):
                     kind = 'kt'
                 self._send(json.dumps(api_messages(kind, cid), ensure_ascii=False).encode('utf-8'),
                            'application/json; charset=utf-8')
+            elif u.path.startswith('/thumb/'):
+                fid = u.path[len('/thumb/'):]
+                data, ctype = read_thumb(fid)
+                if data is None:
+                    self.send_error(404)
+                else:
+                    self.send_response(200)
+                    self.send_header('Content-Type', ctype)
+                    self.send_header('Content-Length', str(len(data)))
+                    self.send_header('Cache-Control', 'public, max-age=86400')
+                    self.end_headers()
+                    self.wfile.write(data)
             else:
                 self.send_error(404)
         except Exception as e:

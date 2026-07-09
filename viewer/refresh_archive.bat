@@ -19,9 +19,15 @@ set ELECTRON_RUN_AS_NODE=1
 "%KEXE%" "%WORK%\decrypt_export.js"
 if not exist "%DBDIR%\teams-decrypted.db" (echo   ERROR: decrypt failed & endlocal & exit /b 2)
 
-echo [3/3] merge into cumulative archive teams-archive.db...
+echo [3/4] merge into cumulative archive teams-archive.db...
 python "%DBDIR%\viewer\merge_archive.py" "%DBDIR%\teams-decrypted.db" "%DBDIR%\teams-archive.db"
 if errorlevel 1 (echo   ERROR: merge failed & endlocal & exit /b 3)
+
+echo [4/4] accumulate image thumbnails (app evicts old ones; keep forever)...
+set THUMBSRC=%APPDATA%\KnoxTeams\prd\thumbs
+set THUMBDST=%DBDIR%\thumbs
+if not exist "%THUMBDST%" mkdir "%THUMBDST%"
+if exist "%THUMBSRC%" (xcopy /y /q /i "%THUMBSRC%\*" "%THUMBDST%\" >nul 2>&1)
 
 echo refresh done.
 endlocal
