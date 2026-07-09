@@ -310,6 +310,10 @@ main{flex:1;display:flex;min-height:0}
 .imgcard .thumb .ig{font-size:26px}
 .imgcard .thumb .in{font-size:12px;word-break:break-word}
 .imgcard .thumbimg{width:100%;max-width:340px;border-radius:12px;border:1px solid #e3e6ea;display:block;cursor:pointer}
+#lightbox{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;cursor:zoom-out}
+#lightbox img{max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.5);cursor:default}
+#lightbox .lbclose{position:absolute;top:18px;right:24px;color:#fff;font-size:30px;line-height:1;cursor:pointer;opacity:.85;user-select:none}
+#lightbox .lbclose:hover{opacity:1}
 .remenu{position:absolute;background:#2b2f36;color:#fff;border-radius:8px;padding:8px 10px;font-size:12px;z-index:20;max-width:240px;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:none}
 .remenu .rh{font-size:11px;color:#b9c2cf;margin-bottom:5px;display:flex;align-items:center;gap:6px}
 .remenu .rn{padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -324,6 +328,7 @@ main{flex:1;display:flex;min-height:0}
 </main>
 <div id="pop" hidden></div>
 <div id="remenu" class="remenu" hidden></div>
+<div id="lightbox" hidden><span class="lbclose" title="닫기 (ESC)">&times;</span><img id="lbimg" src="" alt=""></div>
 <script>
 let B=null,MY='',selEl=null;
 const $=s=>document.querySelector(s);
@@ -397,6 +402,7 @@ function mediaCard(md,mine){
       const img=document.createElement('img');
       img.className='thumbimg';img.src='/thumb/'+encodeURIComponent(md.fid);
       img.alt=md.name||'';img.loading='lazy';
+      img.onclick=()=>openLightbox(img.src);
       img.onerror=()=>{img.remove();c.appendChild(imgFallback(md));};
       c.appendChild(img);
     }else{
@@ -530,6 +536,10 @@ async function doRefresh(){
   btn.disabled=false;
   setTimeout(()=>{if(!btn.disabled)st.textContent='';},8000);
 }
+function openLightbox(src){const lb=$('#lightbox'),im=$('#lbimg');im.src=src;lb.hidden=false;document.body.style.overflow='hidden';}
+function closeLightbox(){const lb=$('#lightbox');lb.hidden=true;$('#lbimg').src='';document.body.style.overflow='';}
+$('#lightbox').onclick=e=>{if(e.target.id!=='lbimg')closeLightbox();};
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#lightbox').hidden)closeLightbox();});
 $('#btnRefresh').onclick=doRefresh;
 (async()=>{B=await (await fetch('/api/bootstrap')).json();MY=B.my;renderKt();})();
 </script></body></html>'''
