@@ -76,10 +76,24 @@ def parse_media(content):
             'size': m.get('size'), 'url': m.get('url'), 'fid': m.get('espFileId')}
 
 
+_NAME_CACHE = None
+
+
+def _name_of(uid):
+    """Resolve contact LocalName for a userId (lazy cached from TB_*Contact)."""
+    global _NAME_CACHE
+    if _NAME_CACHE is None:
+        try:
+            _NAME_CACHE = {k: (v.get('LocalName') or '') for k, v in load_contacts().items()}
+        except Exception:
+            _NAME_CACHE = {}
+    return _NAME_CACHE.get(str(uid)) or ''
+
+
 def _dn(uid, data1=None):
-    """Display name for a system-event participant."""
+    """Display name for a system-event participant (contact name > data1 > userId)."""
     sid = '' if uid is None else str(uid)
-    name = (data1 or '').strip()
+    name = (_name_of(sid) or data1 or '').strip()
     if sid == MY_ID:
         return (name or '이창연') + ' (AI 서비스 에이전트)'
     return name or sid
