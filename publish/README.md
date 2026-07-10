@@ -1,33 +1,34 @@
-# teams-record 개인 복구 패키지
+# teams-record 설치 방법
 
 ## 개요
 
-이 `publish/` 폴더는 개인 회사PC를 Windows 재설치 후 복구할 때 쓰는 teams-record 로컬 뷰어 비공개 패키지입니다. 조직 배포용 패키지가 아니며, 시크릿(키/DB/토큰/쿠키/회사데이터 원본)은 `publish`, git, zip 어디에도 포함하지 않습니다.
+이 패키지는 Knox Teams 로컬 메시지 DB를 누적 아카이브로 만들고, 브라우저에서 조회할 수 있는 Teams Record Viewer를 설치합니다. 시크릿(키/DB/토큰/쿠키/회사데이터 원본)은 `publish`, git, zip 어디에도 포함하지 않습니다.
 
 ## 사전 조건
 
-- Windows 재설치 후 Knox Teams 설치 및 정상 로그인 완료
+- Knox Teams 설치 및 정상 로그인 완료
 - `publish\setup.bat` 실행을 위한 Windows 관리자 권한
 - 키 캡처 시 Knox Teams가 현재 Windows 설치와 현재 로그인 환경에서 실행 가능해야 함
 
 ## 경로 기준
 
-- 설치 위치 기본값은 복구 패키지가 시스템 드라이브에 있으면 `%LOCALAPPDATA%\teams-record`, 데이터 드라이브에 있으면 `<드라이브>:\teams-record`입니다. 예를 들어 시스템 드라이브가 `C:`이고 패키지가 `D:` 드라이브에 있으면 기본 설치 위치는 `D:\teams-record`입니다.
+- 설치 위치 기본값은 패키지가 시스템 드라이브에 있으면 `%LOCALAPPDATA%\teams-record`, 데이터 드라이브에 있으면 `<드라이브>:\teams-record`입니다. 예를 들어 시스템 드라이브가 `C:`이고 패키지가 `D:` 드라이브에 있으면 기본 설치 위치는 `D:\teams-record`입니다.
 - 다른 위치에 설치하려면 `publish\setup.bat -InstallRoot <경로>`를 사용합니다. 기본값으로 개발자 PC 경로를 쓰지 않습니다.
 - 작업 폴더는 현재 로그인한 Windows 계정의 `%USERPROFILE%\teams-record-work`입니다. 계정명은 고정하지 않고 `%USERNAME%`, `%USERPROFILE%`, `%LOCALAPPDATA%` 기준으로 계산합니다.
 - 작업 스케줄러 `TeamsRecordViewer`도 현재 로그인한 Windows 사용자(`DOMAIN\user` 형식)를 기준으로 등록합니다.
 - Knox Teams 기본 경로는 `C:\mySingle\KnoxTeams`입니다. 다른 경로에 설치했다면 setup에는 `-KnoxRoot <경로>`를 넘기고, refresh/capture 실행 시에는 `KNOX_ROOT` 환경변수로 지정할 수 있습니다.
 - live DB는 `%APPDATA%\KnoxTeams\prd\` 아래의 메시지 DB를 자동탐지합니다.
 
-## 재설치 후 순서
+## 설치 순서
 
-1. Windows를 재설치하고 Knox Teams를 설치합니다.
-2. Knox Teams에 정상 로그인합니다.
+1. zip 파일을 원하는 폴더에 압축 해제합니다.
+2. Knox Teams가 설치되어 있고 정상 로그인되는지 확인합니다.
 3. `publish\setup.bat`를 관리자 권한으로 실행합니다.
-4. `publish\capture-key.bat`를 실행해 현재 Knox Teams 로그인 환경 기준으로 키를 새로 확보합니다.
-5. 이후 로그온/재부팅 시 `TeamsRecordViewer` 작업 스케줄러가 refresh와 뷰어 서버를 자동 실행합니다. 수동으로 열 때는 바탕화면의 `Teams Viewer` 바로가기를 사용합니다.
+4. Knox Teams를 작업표시줄/트레이까지 완전히 종료합니다.
+5. `publish\capture-key.bat`를 실행해 현재 Knox Teams 로그인 환경 기준으로 키를 확보합니다.
+6. 바탕화면의 `Teams Viewer` 바로가기를 실행합니다.
 
-기존 `dbkey.secret`은 복원하지 않습니다. Windows 재설치 후 Knox Teams 로컬 키가 달라질 수 있으므로, 키는 현재 설치된 Knox Teams에서 재캡처하는 흐름이 정석입니다.
+`capture-key.bat`는 해당 PC에서 최초 설치 후 1회 실행하면 됩니다. 이후 로그온/재부팅 시 `TeamsRecordViewer` 작업 스케줄러가 refresh와 뷰어 서버를 자동 실행합니다. Knox Teams 재로그인, 재설치, DB 키 변경 등으로 복호화가 되지 않을 때만 다시 실행합니다.
 
 ## 실행 방법
 
@@ -49,7 +50,7 @@ publish\setup.bat -InstallRoot E:\teams-record -KnoxRoot C:\mySingle\KnoxTeams
 publish\setup.bat -CheckOnly
 ```
 
-재설치 전 백업한 복호화 이력 데이터를 함께 복원하려면:
+이전에 백업한 복호화 이력 데이터를 함께 복원하려면:
 
 ```bat
 publish\setup.bat -DataBackup C:\backup\teams-db
@@ -65,7 +66,7 @@ publish\capture-key.bat
 
 `capture-key.bat`는 Frida를 사용해 현재 Knox Teams 실행 환경에서 SQLCipher 키를 다시 캡처하고, 결과를 `%USERPROFILE%\teams-record-work\dbkey.secret`에만 기록합니다.
 
-## 복구 후 확인 방법
+## 설치 후 확인 방법
 
 1. `publish\setup.bat -CheckOnly` 결과에서 필수 파일, 대상 경로, 바로가기, 키 상태를 확인합니다.
 2. 작업 스케줄러에서 `TeamsRecordViewer` 상태가 `Ready`인지 확인합니다.
@@ -88,14 +89,14 @@ Unregister-ScheduledTask -TaskName TeamsRecordViewer -Confirm:$false
 
 주의: 설치 위치를 삭제하면 `teams-archive.db`와 `thumbs\` 이력도 함께 삭제됩니다.
 
-## 재설치 전 백업 권장
+## 백업 권장
 
-Windows 재설치 전에 이력 보존이 필요하면 아래만 외부 백업 폴더에 복사합니다.
+이력 보존이 필요하면 아래만 외부 백업 폴더에 복사합니다.
 
 - `<설치위치>\teams-archive.db`
 - `<설치위치>\thumbs\`
 
-`dbkey.secret` 백업은 참고용일 뿐 재설치 후 유효하다는 보장이 없습니다. 재설치 후 키는 `publish\capture-key.bat`로 현재 Knox Teams 환경에서 재캡처합니다.
+`dbkey.secret` 백업은 참고용일 뿐 다른 Windows 설치나 다른 로그인 환경에서 유효하다는 보장이 없습니다. 키는 `publish\capture-key.bat`로 현재 Knox Teams 환경에서 캡처합니다.
 
 ## publish에 포함하면 안 되는 파일 목록
 
