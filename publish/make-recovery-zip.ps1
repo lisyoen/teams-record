@@ -91,7 +91,9 @@ $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
 try {
     $entries = @($zip.Entries | Sort-Object FullName)
     $badEntries = @($entries | Where-Object { Test-ForbiddenEntry $_.FullName })
-    $rootFolderEntries = @($entries | Where-Object { $_.FullName -like "$PackageName/*" })
+    $rootFolderEntries = @($entries | Where-Object {
+        ($_.FullName -replace '\\', '/') -like "$PackageName/*"
+    })
     if ($badEntries.Count -gt 0) {
         Write-Host "Forbidden entries found in zip:"
         $badEntries | ForEach-Object { Write-Host " - $($_.FullName)" }
