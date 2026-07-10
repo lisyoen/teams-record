@@ -40,7 +40,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-python -c "import pathlib,re,sys; log=pathlib.Path(sys.argv[1]); key=pathlib.Path(sys.argv[2]); text=log.read_text(encoding='utf-8', errors='ignore') if log.exists() else ''; found=re.findall(r\"PRAGMA key='([^']+)'\", text); sys.exit('PRAGMA key was not captured. Log: '+str(log)) if not found else key.write_text(found[-1], encoding='utf-8')" "%LOG%" "%KEY%"
+python -c "import pathlib,re,sys; log=pathlib.Path(sys.argv[1]); key=pathlib.Path(sys.argv[2]); text=log.read_text(encoding='utf-8', errors='ignore') if log.exists() else ''; found=re.findall(r\"PRAGMA\\s+key\\s*=\\s*'([^']+)'\", text, re.I); sys.exit('PRAGMA key was not captured. Log: '+str(log)) if not found else key.write_text(found[-1], encoding='utf-8')" "%LOG%" "%KEY%"
 if errorlevel 1 exit /b 1
 
 for %%A in ("%KEY%") do echo Captured dbkey.secret: %%~fA
