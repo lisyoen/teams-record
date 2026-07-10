@@ -311,6 +311,7 @@ main{flex:1;display:flex;min-height:0}
 .imgcard .thumb .in{font-size:12px;word-break:break-word}
 .imgcard .thumbimg{width:100%;max-width:340px;border-radius:12px;border:1px solid #e3e6ea;display:block;cursor:pointer}
 #lightbox{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;cursor:zoom-out}
+#lightbox[hidden]{display:none}
 #lightbox img{max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.5);cursor:default}
 #lightbox .lbclose{position:absolute;top:18px;right:24px;color:#fff;font-size:30px;line-height:1;cursor:pointer;opacity:.85;user-select:none}
 #lightbox .lbclose:hover{opacity:1}
