@@ -250,7 +250,7 @@ def read_thumb(fid):
 
 
 PAGE = '''<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><title>Teams Record Viewer</title>
+<html lang="ko"><head><meta charset="utf-8"><title>Teams Record Viewer</title><link rel="icon" type="image/svg+xml" href="/favicon.ico">
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:'Malgun Gothic','Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;color:#222}
@@ -603,6 +603,21 @@ class H(BaseHTTPRequestHandler):
                     kind = 'kt'
                 self._send(json.dumps(api_messages(kind, cid), ensure_ascii=False).encode('utf-8'),
                            'application/json; charset=utf-8')
+            elif u.path == '/favicon.ico':
+                ico = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+                       '<rect width="32" height="32" rx="7" fill="#5b5fc7"/>'
+                       '<rect x="6" y="8" width="20" height="14" rx="3.5" fill="#fff"/>'
+                       '<path d="M11 22 L11 27 L16 22 Z" fill="#fff"/>'
+                       '<circle cx="12" cy="15" r="1.7" fill="#5b5fc7"/>'
+                       '<circle cx="16" cy="15" r="1.7" fill="#5b5fc7"/>'
+                       '<circle cx="20" cy="15" r="1.7" fill="#5b5fc7"/>'
+                       '</svg>').encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/svg+xml')
+                self.send_header('Content-Length', str(len(ico)))
+                self.send_header('Cache-Control', 'public, max-age=604800')
+                self.end_headers()
+                self.wfile.write(ico)
             elif u.path.startswith('/thumb/'):
                 fid = u.path[len('/thumb/'):]
                 data, ctype = read_thumb(fid)
