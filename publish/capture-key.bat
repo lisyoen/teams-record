@@ -24,8 +24,8 @@ cd /d "%WORK%"
 
 python -c "import frida" >nul 2>&1
 if errorlevel 1 (
-  echo Frida is not installed. Installing frida and frida-tools...
-  python -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org frida frida-tools
+  echo Frida is not installed. Installing frida...
+  python -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org frida
   if errorlevel 1 (
     echo ERROR: Frida install failed. Install it manually, then rerun this file.
     exit /b 1
@@ -40,7 +40,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-python -c "import pathlib,re,sys; log=pathlib.Path(r'%LOG%'); key=pathlib.Path(r'%KEY%'); text=log.read_text(encoding='utf-8', errors='ignore') if log.exists() else ''; found=re.findall(r\"PRAGMA key='([^']+)'\", text); sys.exit('PRAGMA key was not captured. Log: %LOG%') if not found else key.write_text(found[-1], encoding='utf-8')"
+python -c "import pathlib,re,sys; log=pathlib.Path(sys.argv[1]); key=pathlib.Path(sys.argv[2]); text=log.read_text(encoding='utf-8', errors='ignore') if log.exists() else ''; found=re.findall(r\"PRAGMA key='([^']+)'\", text); sys.exit('PRAGMA key was not captured. Log: '+str(log)) if not found else key.write_text(found[-1], encoding='utf-8')" "%LOG%" "%KEY%"
 if errorlevel 1 exit /b 1
 
 for %%A in ("%KEY%") do echo Captured dbkey.secret: %%~fA
