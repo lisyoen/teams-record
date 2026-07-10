@@ -52,29 +52,29 @@ function Ensure-Directory([string]$Path) {
 }
 
 function Get-RequiredSources {
-    $items = New-Object System.Collections.Generic.List[object]
+    $items = @()
 
     $viewerSource = Join-Path $RepoRoot 'viewer'
     foreach ($name in @('server.py', 'merge_archive.py', 'refresh_archive.bat', 'start_viewer.bat', 'teams-viewer.bat')) {
-        $items.Add([pscustomobject]@{
+        $items += [pscustomobject]@{
             Group = 'viewer'
             Name = $name
             Source = Join-Path $viewerSource $name
             Destination = Join-Path $ViewerDir $name
-        }) | Out-Null
+        }
     }
 
     $workSource = Join-Path $PSScriptRoot 'work'
     foreach ($name in @('decrypt_export.js', 'sqlite3.js', 'sqlite3-binding.js', 'spawn_key.py', 'hook_napi.py')) {
-        $items.Add([pscustomobject]@{
+        $items += [pscustomobject]@{
             Group = 'work'
             Name = $name
             Source = Join-Path $workSource $name
             Destination = Join-Path $WorkDir $name
-        }) | Out-Null
+        }
     }
 
-    return @($items)
+    return $items
 }
 
 function Test-Prerequisites([switch]$Quiet) {
