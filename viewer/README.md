@@ -6,12 +6,13 @@ KnoxTeams 평문 스냅샷(`teams-decrypted.db`)을 로컬에서 열람하는 �
 
 - 회사PC(lisyoen-desktop2) 로컬 전용. 서버는 `127.0.0.1:8799` 만 바인딩(외부 노출 금지).
 - 본인 계정·본인 대화 한정. `teams-decrypted.db` 는 실제 대화 본문이므로 커밋 금지(`.gitignore *.db`).
+- 뷰어는 자기 위치 기준으로 실행됩니다. 기본 복구 설치 위치는 패키지를 둔 현재 드라이브의 `\teams-record`이며, `setup.ps1 -InstallRoot`로 바꿀 수 있습니다.
 
 ## 구성
 
 - `server.py` : Python 3.11 표준 라이브러리(`http.server` + `sqlite3`) 단일 서버. 외부 패키지 의존 없음. read-only 로 DB 조회.
-- 데이터 소스: `D:\git\teams-db\teams-decrypted.db` (평문 SQLite, 키 불필요).
-- 실행 바로가기: `D:\git\teams-db\teams-viewer.bat` (server.py 백그라운드 기동 → 크롬으로 `http://localhost:8799/` 오픈).
+- 데이터 소스: 뷰어 루트의 `teams-archive.db`, 없으면 `teams-decrypted.db` (평문 SQLite, 키 불필요).
+- 실행 바로가기: 설치 위치의 `viewer\teams-viewer.bat` (server.py 백그라운드 기동 → 크롬으로 `http://localhost:8799/` 오픈).
 
 ## 화면
 

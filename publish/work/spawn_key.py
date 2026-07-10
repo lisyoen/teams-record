@@ -1,7 +1,8 @@
-import frida, time
+import frida, os, time
 
-LOG = r"C:\Users\lisyoen\teams-record-work\key_spawn.log"
-EXE = r"C:\mySingle\KnoxTeams\KnoxTeams.exe"
+WORK = os.path.join(os.path.expanduser('~'), 'teams-record-work')
+LOG = os.path.join(WORK, 'key_spawn.log')
+EXE = os.path.join(os.environ.get('KNOX_ROOT', r'C:\mySingle\KnoxTeams'), 'KnoxTeams.exe')
 
 def log(m):
     with open(LOG,'a',encoding='utf-8') as f: f.write(m+"\n")

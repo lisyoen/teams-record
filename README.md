@@ -9,7 +9,7 @@
 - 본인 계정의 본인 대화 기록을 회사PC 로컬에만 보관·조회. 외부 반출·타인 열람 없음. 접근 권한 범위는 기존과 동일(본인만). 신규 권한 획득이나 보안 통제 무력화 아님.
 
 ## 대상 분석 (2026-07-07)
-- Knox Teams = 삼성SDS mySingle 계보, Electron. 설치 `C:\mySingle\KnoxTeams`.
+- Knox Teams = 삼성SDS mySingle 계보, Electron. 기본 설치 위치는 `C:\mySingle\KnoxTeams`이며, 다른 위치는 복구 패키지의 `-KnoxRoot` 또는 `KNOX_ROOT`로 지정.
 - 메시징: 네이티브 RAW TCP(nq_tcpmodule) + Protobuf over TLS, 포트 5223 (REST 아님). 443은 보조.
 - 메시지 DB: `%APPDATA%\KnoxTeams\prd\<dbhash>.db` (SQLite WAL). 헤더 고엔트로피 → SQLCipher(@journeyapps/sqlcipher 추정, Signal 동일 스택). DB 소유 프로세스가 node_sqlite3.node 로드.
 - 설정: `commonConfig.store` / `prd\config_<dbhash>.store` = CryptoJS AES(OpenSSL "Salted__"). DB별 SQLCipher 키가 config.store 안 추정.
@@ -31,6 +31,12 @@ config_<dbhash>.store → CryptoJS.AES.decrypt(store, P) → SQLCipher 키 K
 
 ## 상태
 기획중 — 키 회수 PoC 예정. 상세 기획/현황은 spark-home craftbay-docs `proposals/teams-record.md`, `settings/projects/teams-record.md`.
+
+## 복구 패키지 경로 기준
+
+- 기본 설치 위치는 복구 패키지를 둔 현재 드라이브의 `\teams-record`이며 `publish\setup.bat -InstallRoot <경로>`로 바꿀 수 있습니다.
+- 작업 폴더와 키 캡처 결과는 현재 Windows 사용자 기준 `%USERPROFILE%\teams-record-work`를 사용합니다.
+- Knox DB는 `%APPDATA%\KnoxTeams\prd\`에서 자동탐지합니다.
 
 ## 로컬 뷰어 UI 디자인
 

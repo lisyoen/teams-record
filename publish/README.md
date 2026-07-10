@@ -10,6 +10,15 @@
 - `publish\setup.bat` 실행을 위한 Windows 관리자 권한
 - 키 캡처 시 Knox Teams가 현재 Windows 설치와 현재 로그인 환경에서 실행 가능해야 함
 
+## 경로 기준
+
+- 설치 위치 기본값은 복구 패키지를 둔 현재 드라이브의 `\teams-record`입니다. 예를 들어 `E:` 드라이브에서 실행하면 기본 설치 위치는 `E:\teams-record`입니다.
+- 다른 위치에 설치하려면 `publish\setup.bat -InstallRoot <경로>`를 사용합니다.
+- 작업 폴더는 현재 로그인한 Windows 계정의 `%USERPROFILE%\teams-record-work`입니다. 계정명은 고정하지 않습니다.
+- 작업 스케줄러 `TeamsRecordViewer`도 현재 로그인한 Windows 사용자(`DOMAIN\user` 형식)를 기준으로 등록합니다.
+- Knox Teams 기본 경로는 `C:\mySingle\KnoxTeams`입니다. 다른 경로에 설치했다면 setup에는 `-KnoxRoot <경로>`를 넘기고, refresh/capture 실행 시에는 `KNOX_ROOT` 환경변수로 지정할 수 있습니다.
+- live DB는 `%APPDATA%\KnoxTeams\prd\` 아래의 메시지 DB를 자동탐지합니다.
+
 ## 재설치 후 순서
 
 1. Windows를 재설치하고 Knox Teams를 설치합니다.
@@ -26,6 +35,12 @@
 
 ```bat
 publish\setup.bat
+```
+
+설치 위치 또는 Knox Teams 위치를 직접 지정하려면:
+
+```bat
+publish\setup.bat -InstallRoot E:\teams-record -KnoxRoot C:\mySingle\KnoxTeams
 ```
 
 점검만 수행하고 아무 것도 변경하지 않으려면:
@@ -48,7 +63,7 @@ publish\setup.bat -DataBackup C:\backup\teams-db
 publish\capture-key.bat
 ```
 
-`capture-key.bat`는 Frida를 사용해 현재 Knox Teams 실행 환경에서 SQLCipher 키를 다시 캡처하고, 결과를 `C:\Users\lisyoen\teams-record-work\dbkey.secret`에만 기록합니다.
+`capture-key.bat`는 Frida를 사용해 현재 Knox Teams 실행 환경에서 SQLCipher 키를 다시 캡처하고, 결과를 `%USERPROFILE%\teams-record-work\dbkey.secret`에만 기록합니다.
 
 ## 복구 후 확인 방법
 
@@ -68,17 +83,17 @@ Unregister-ScheduledTask -TaskName TeamsRecordViewer -Confirm:$false
 
 그 다음 바탕화면의 `Teams 뷰어` 바로가기를 삭제하고, 필요하면 아래 폴더를 삭제합니다.
 
-- `D:\git\teams-db`
-- `C:\Users\lisyoen\teams-record-work`
+- 설치 위치(기본 `<드라이브>:\teams-record`, 또는 `-InstallRoot`로 지정한 경로)
+- `%USERPROFILE%\teams-record-work`
 
-주의: `D:\git\teams-db`를 삭제하면 `teams-archive.db`와 `thumbs\` 이력도 함께 삭제됩니다.
+주의: 설치 위치를 삭제하면 `teams-archive.db`와 `thumbs\` 이력도 함께 삭제됩니다.
 
 ## 재설치 전 백업 권장
 
 Windows 재설치 전에 이력 보존이 필요하면 아래만 외부 백업 폴더에 복사합니다.
 
-- `D:\git\teams-db\teams-archive.db`
-- `D:\git\teams-db\thumbs\`
+- `<설치위치>\teams-archive.db`
+- `<설치위치>\thumbs\`
 
 `dbkey.secret` 백업은 참고용일 뿐 재설치 후 유효하다는 보장이 없습니다. 재설치 후 키는 `publish\capture-key.bat`로 현재 Knox Teams 환경에서 재캡처합니다.
 

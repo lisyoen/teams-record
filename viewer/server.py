@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """teams-record local viewer (MVP)
 - Company-PC (lisyoen-desktop2) local only. Binds 127.0.0.1:8799 (no external exposure).
-- Data source: D:\\git\\teams-db\\teams-decrypted.db (plaintext SQLite snapshot, read-only).
+- Data source: viewer package root teams-archive.db, falling back to teams-decrypted.db.
 - UI spec: teams-record repo design/viewer-ui-design.md (commit 6e2f93e) + assets/04 bubble layout.
 """
 import base64, json, os, re, sqlite3, subprocess, threading
@@ -10,14 +10,15 @@ from urllib.parse import urlparse, parse_qs
 
 # Prefer cumulative archive (retains messages aged out of live DB); fall back to
 # the single-shot decrypted snapshot.
-_ARCHIVE = r'D:\git\teams-db\teams-archive.db'
-_SNAPSHOT = r'D:\git\teams-db\teams-decrypted.db'
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ARCHIVE = os.path.join(_ROOT, 'teams-archive.db')
+_SNAPSHOT = os.path.join(_ROOT, 'teams-decrypted.db')
 DB = _ARCHIVE if os.path.exists(_ARCHIVE) else _SNAPSHOT
 PORT = 8799
 MY_ID = '754107854600802305'
 REFRESH_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'refresh_archive.bat')
 _REFRESH_LOCK = threading.Lock()
-THUMBS_DIR = r'D:\git\teams-db\thumbs'
+THUMBS_DIR = os.path.join(_ROOT, 'thumbs')
 CMD_RE = re.compile(r'^\s*<!--.*?-->\s*', re.S)
 FAVICON_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'

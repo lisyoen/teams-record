@@ -1,8 +1,23 @@
 @echo off
 setlocal
-set WORK=C:\Users\lisyoen\teams-record-work
-set LOG=%WORK%\key_spawn.log
-set KEY=%WORK%\dbkey.secret
+set "WORK=%USERPROFILE%\teams-record-work"
+set "LOG=%WORK%\key_spawn.log"
+set "KEY=%WORK%\dbkey.secret"
+
+if not defined KNOX_ROOT (
+  if exist "C:\mySingle\KnoxTeams\KnoxTeams.exe" set "KNOX_ROOT=C:\mySingle\KnoxTeams"
+)
+if not defined KNOX_ROOT (
+  for /f "delims=" %%I in ('where KnoxTeams.exe 2^>nul') do if not defined KNOX_ROOT for %%J in ("%%~dpI.") do set "KNOX_ROOT=%%~fJ"
+)
+if not defined KNOX_ROOT (
+  echo ERROR: KnoxTeams.exe was not found. Set KNOX_ROOT to the KnoxTeams install directory.
+  exit /b 1
+)
+if not exist "%KNOX_ROOT%\KnoxTeams.exe" (
+  echo ERROR: KnoxTeams.exe was not found: %KNOX_ROOT%\KnoxTeams.exe
+  exit /b 1
+)
 
 if not exist "%WORK%" mkdir "%WORK%"
 cd /d "%WORK%"

@@ -1,6 +1,6 @@
-import frida, time
+import frida, os, time
 
-LOG = r"C:\Users\lisyoen\teams-record-work\key_capture.log"
+LOG = os.path.join(os.path.expanduser('~'), 'teams-record-work', 'key_capture.log')
 OBS_SEC = 30
 
 def log(msg):

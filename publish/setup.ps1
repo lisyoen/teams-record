@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$DataBackup,
+    [string]$InstallRoot,
+    [string]$KnoxRoot,
     [switch]$ShortcutOnly,
     [switch]$CheckOnly
 )
@@ -8,14 +10,23 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $TaskName = 'TeamsRecordViewer'
-$InstallRoot = 'D:\git\teams-db'
+$packageDrive = Split-Path -Qualifier $PSScriptRoot
+if (-not $InstallRoot) {
+    if ($packageDrive) {
+        $InstallRoot = Join-Path "${packageDrive}\" 'teams-record'
+    } else {
+        $InstallRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'teams-record'
+    }
+}
+if (-not $KnoxRoot) { $KnoxRoot = 'C:\mySingle\KnoxTeams' }
 $ViewerDir = Join-Path $InstallRoot 'viewer'
 $ThumbsDir = Join-Path $InstallRoot 'thumbs'
-$WorkDir = 'C:\Users\lisyoen\teams-record-work'
+$WorkDir = Join-Path $env:USERPROFILE 'teams-record-work'
 $DesktopShortcut = Join-Path $env:USERPROFILE 'Desktop\Teams 뷰어.lnk'
 $ViewerBat = Join-Path $ViewerDir 'teams-viewer.bat'
 $StartBat = Join-Path $ViewerDir 'start_viewer.bat'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+$CurrentUser = (& whoami).Trim()
 
 $Summary = New-Object System.Collections.Generic.List[string]
 $Warnings = New-Object System.Collections.Generic.List[string]
@@ -40,6 +51,8 @@ function Ensure-Admin {
     if (Test-Admin) { return }
     $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
     if ($DataBackup) { $args += @('-DataBackup', "`"$DataBackup`"") }
+    if ($InstallRoot) { $args += @('-InstallRoot', "`"$InstallRoot`"") }
+    if ($KnoxRoot) { $args += @('-KnoxRoot', "`"$KnoxRoot`"") }
     if ($ShortcutOnly) { $args += '-ShortcutOnly' }
     Start-Process -FilePath 'powershell.exe' -ArgumentList $args -Verb RunAs
     exit
@@ -186,6 +199,15 @@ function Notice-Key {
     Add-WarningLine "dbkey.secret is missing. After KnoxTeams login, run publish\capture-key.bat to recapture the key for the current local Knox Teams environment."
 }
 
+function Test-KnoxRoot {
+    $knoxExe = Join-Path $KnoxRoot 'KnoxTeams.exe'
+    if (Test-Path -LiteralPath $knoxExe -PathType Leaf) {
+        Add-Summary "KnoxTeams found: $knoxExe"
+        return
+    }
+    Add-WarningLine "KnoxTeams was not found at $knoxExe. If Knox Teams is installed elsewhere, rerun setup with -KnoxRoot or set KNOX_ROOT before refresh/capture."
+}
+
 function Test-DataBackupPath {
     if (-not $DataBackup) { return }
     if (-not (Test-Path -LiteralPath $DataBackup)) {
@@ -236,7 +258,7 @@ function Register-ViewerTask {
     }
 
     $taskRun = "cmd /c `"$StartBat`""
-    & schtasks /Create /TN $TaskName /SC ONLOGON /TR $taskRun /RU 'lisyoen' /RL HIGHEST /F | Out-Null
+    & schtasks /Create /TN $TaskName /SC ONLOGON /TR $taskRun /RU $CurrentUser /RL HIGHEST /F | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to register scheduled task: $TaskName"
     }
@@ -290,6 +312,10 @@ function Test-PathWritableStatus([string]$Path) {
 function Invoke-CheckOnly {
     Write-Host "teams-record setup CheckOnly"
     Write-Host "RepoRoot: $RepoRoot"
+    Write-Host "InstallRoot: $InstallRoot"
+    Write-Host "WorkDir: $WorkDir"
+    Write-Host "KnoxRoot: $KnoxRoot"
+    Write-Host "ScheduledTaskUser: $CurrentUser"
     Write-Host "No files, folders, shortcuts, Python packages, or scheduled tasks are changed in this mode."
     Write-Host ""
 
@@ -322,6 +348,13 @@ function Invoke-CheckOnly {
         } else {
             Write-CheckLine 'WARN' "target path: $path ($status)"
         }
+    }
+
+    $knoxExe = Join-Path $KnoxRoot 'KnoxTeams.exe'
+    if (Test-Path -LiteralPath $knoxExe -PathType Leaf) {
+        Write-CheckLine 'OK' "KnoxTeams: $knoxExe"
+    } else {
+        Write-CheckLine 'WARN' "KnoxTeams: not found at $knoxExe; use -KnoxRoot or KNOX_ROOT if installed elsewhere"
     }
 
     & schtasks /Query /TN $TaskName *> $null
@@ -368,6 +401,7 @@ if (-not (Test-Prerequisites)) {
 
 Install-Python311
 Install-Files
+Test-KnoxRoot
 Notice-Key
 Restore-Data
 Register-ViewerTask

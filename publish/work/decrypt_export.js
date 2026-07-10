@@ -1,11 +1,12 @@
 const path=require('path'), fs=require('fs');
-const WORK='C:\\Users\\lisyoen\\teams-record-work';
+const WORK=path.join(process.env.USERPROFILE,'teams-record-work');
 const sqlite3=require(path.join(WORK,'sqlite3.js')).verbose();
 const key=fs.readFileSync(path.join(WORK,'dbkey.secret'),'utf8').trim();
 const SRC=path.join(WORK,'snap.db');
-const OUTDIR='D:\\git\\teams-db';
-const OUT=OUTDIR+'\\teams-decrypted.db';
-const OUT_SQL='D:/git/teams-db/teams-decrypted.db';
+const OUTDIR=process.env.TEAMS_DB_DIR;
+if(!OUTDIR){ console.log('ERROR: TEAMS_DB_DIR is not set'); process.exit(1); }
+const OUT=path.join(OUTDIR,'teams-decrypted.db');
+const OUT_SQL=OUT.replace(/\\/g,'/');
 try{fs.mkdirSync(OUTDIR,{recursive:true});}catch(e){}
 try{fs.unlinkSync(OUT);}catch(e){}
 try{fs.unlinkSync(OUT+'-wal');}catch(e){}
@@ -33,7 +34,7 @@ function verify(){
       if(views.length)console.log('VIEWS('+views.length+'): '+views.join(', '));
     });
     v.all("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name",(e,rows)=>{
-      if(!e){ fs.writeFileSync(OUTDIR+'\\schema.sql', rows.map(r=>r.sql+';').join('\n\n'),'utf8'); console.log('SCHEMA_SQL_WRITTEN objects='+rows.length); }
+      if(!e){ fs.writeFileSync(path.join(OUTDIR,'schema.sql'), rows.map(r=>r.sql+';').join('\n\n'),'utf8'); console.log('SCHEMA_SQL_WRITTEN objects='+rows.length); }
     });
     v.get("SELECT count(*) c FROM TB_KtMessage",(e,r)=>{ if(!e)console.log('TB_KtMessage_rows='+r.c); });
     v.close(()=>{ const st=fs.statSync(OUT); console.log('OUT_SIZE_BYTES='+st.size); console.log('DONE'); });
