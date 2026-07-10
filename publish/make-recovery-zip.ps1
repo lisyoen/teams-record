@@ -84,17 +84,23 @@ if (Test-Path -LiteralPath $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }
 
-Compress-Archive -Path $PackageRoot -DestinationPath $ZipPath -Force
+Compress-Archive -Path (Join-Path $PackageRoot "*") -DestinationPath $ZipPath -Force
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
 try {
     $entries = @($zip.Entries | Sort-Object FullName)
     $badEntries = @($entries | Where-Object { Test-ForbiddenEntry $_.FullName })
+    $rootFolderEntries = @($entries | Where-Object { $_.FullName -like "$PackageName/*" })
     if ($badEntries.Count -gt 0) {
         Write-Host "Forbidden entries found in zip:"
         $badEntries | ForEach-Object { Write-Host " - $($_.FullName)" }
         throw 'Recovery zip contains forbidden entries.'
+    }
+    if ($rootFolderEntries.Count -gt 0) {
+        Write-Host "Unexpected package root folder entries found in zip:"
+        $rootFolderEntries | ForEach-Object { Write-Host " - $($_.FullName)" }
+        throw 'Recovery zip should contain publish/ and viewer/ at the archive root.'
     }
 
     Write-Host "Archive: $ZipPath"
