@@ -150,6 +150,18 @@ function Get-PythonVersion {
     return $null
 }
 
+function Install-Python311FromInstaller {
+    Write-Host "Downloading Python 3.11 installer..."
+    $installer = Join-Path $env:TEMP 'python-3.11-amd64.exe'
+    $url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'
+    Invoke-WebRequest -Uri $url -OutFile $installer
+
+    $process = Start-Process -FilePath $installer -ArgumentList '/quiet InstallAllUsers=1 PrependPath=1 Include_test=0' -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "Python 3.11 installer failed with exit code $($process.ExitCode)."
+    }
+}
+
 function Install-Python311 {
     $version = Get-PythonVersion
     if ($version -and $version.Major -eq 3 -and $version.Minor -eq 11) {
@@ -159,14 +171,15 @@ function Install-Python311 {
 
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
-        Write-Host "Installing Python 3.11 using winget..."
-        & winget install -e --id Python.Python.3.11 --accept-package-agreements --accept-source-agreements
+        Write-Host "Installing Python 3.11 using winget source..."
+        & winget install -e --id Python.Python.3.11 --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+        if ($LASTEXITCODE -ne 0) {
+            Add-WarningLine "winget Python install failed with exit code $LASTEXITCODE. Falling back to the python.org installer."
+            Install-Python311FromInstaller
+        }
     } else {
-        Write-Host "winget is not available. Downloading Python 3.11 installer..."
-        $installer = Join-Path $env:TEMP 'python-3.11-amd64.exe'
-        $url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'
-        Invoke-WebRequest -Uri $url -OutFile $installer
-        Start-Process -FilePath $installer -ArgumentList '/quiet InstallAllUsers=1 PrependPath=1 Include_test=0' -Wait
+        Write-Host "winget is not available."
+        Install-Python311FromInstaller
     }
 
     Refresh-EnvironmentPath
