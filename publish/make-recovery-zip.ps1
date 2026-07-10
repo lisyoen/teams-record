@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$DateStamp = (Get-Date -Format 'yyyyMMdd')
+    [string]$DateStamp = (Get-Date -Format 'yyyyMMdd'),
+    [string]$PackageVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -8,7 +9,11 @@ $ErrorActionPreference = 'Stop'
 $PublishRoot = $PSScriptRoot
 $RepoRoot = Split-Path -Parent $PublishRoot
 $DistDir = Join-Path $PublishRoot 'dist'
-$PackageName = "teams-record-recovery-$DateStamp"
+if ($PackageVersion) {
+    $PackageName = "teams-record-recovery-$DateStamp-$PackageVersion"
+} else {
+    $PackageName = "teams-record-recovery-$DateStamp"
+}
 $StageRoot = Join-Path $DistDir '.stage'
 $PackageRoot = Join-Path $StageRoot $PackageName
 $ZipPath = Join-Path $DistDir "$PackageName.zip"

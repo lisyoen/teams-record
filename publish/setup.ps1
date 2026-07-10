@@ -40,6 +40,11 @@ $CurrentUser = (& whoami).Trim()
 $Summary = New-Object System.Collections.Generic.List[string]
 $Warnings = New-Object System.Collections.Generic.List[string]
 
+function Invoke-SchtasksQuiet([string]$ArgumentLine) {
+    & $env:ComSpec /d /c "schtasks.exe $ArgumentLine >nul 2>nul"
+    return $LASTEXITCODE
+}
+
 function Add-Summary([string]$Message) {
     $Summary.Add($Message) | Out-Null
     Write-Host "[OK] $Message"
@@ -274,14 +279,13 @@ function Register-ViewerTask {
         throw "Scheduled task action is missing: $StartBat"
     }
 
-    & schtasks /Query /TN $TaskName *> $null
-    if ($LASTEXITCODE -eq 0) {
-        & schtasks /Delete /TN $TaskName /F | Out-Null
+    if ((Invoke-SchtasksQuiet "/Query /TN `"$TaskName`"") -eq 0) {
+        [void](Invoke-SchtasksQuiet "/Delete /TN `"$TaskName`" /F")
     }
 
-    $taskRun = "cmd /c `"$StartBat`""
-    & schtasks /Create /TN $TaskName /SC ONLOGON /TR $taskRun /RU $CurrentUser /RL HIGHEST /F | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $taskRun = "cmd /c `"`"$StartBat`"`""
+    $createArgs = "/Create /TN `"$TaskName`" /SC ONLOGON /TR `"$taskRun`" /RU `"$CurrentUser`" /RL HIGHEST /F"
+    if ((Invoke-SchtasksQuiet $createArgs) -ne 0) {
         throw "Failed to register scheduled task: $TaskName"
     }
     Add-Summary "scheduled task registered: $TaskName"
@@ -379,8 +383,7 @@ function Invoke-CheckOnly {
         Write-CheckLine 'WARN' "KnoxTeams: not found at $knoxExe; use -KnoxRoot or KNOX_ROOT if installed elsewhere"
     }
 
-    & schtasks /Query /TN $TaskName *> $null
-    if ($LASTEXITCODE -eq 0) {
+    if ((Invoke-SchtasksQuiet "/Query /TN `"$TaskName`"") -eq 0) {
         Write-CheckLine 'OK' "scheduled task exists: $TaskName"
     } else {
         Write-CheckLine 'MISSING' "scheduled task missing: $TaskName"
