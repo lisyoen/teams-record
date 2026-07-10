@@ -659,8 +659,9 @@ class H(BaseHTTPRequestHandler):
                 return
             try:
                 proc = subprocess.run(['cmd', '/c', REFRESH_BAT], capture_output=True,
-                                      text=True, timeout=600,
-                                      cwd=os.path.dirname(REFRESH_BAT))
+                                      text=True, encoding='utf-8', errors='replace',
+                                      env={**os.environ, 'PYTHONUTF8': '1', 'PYTHONIOENCODING': 'utf-8'},
+                                      timeout=600, cwd=os.path.dirname(REFRESH_BAT))
                 ok = proc.returncode == 0
                 import datetime as _dt
                 at = _dt.datetime.now().strftime('%H:%M:%S')
