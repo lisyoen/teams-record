@@ -4,7 +4,7 @@
 - Data source: D:\\git\\teams-db\\teams-decrypted.db (plaintext SQLite snapshot, read-only).
 - UI spec: teams-record repo design/viewer-ui-design.md (commit 6e2f93e) + assets/04 bubble layout.
 """
-import json, os, re, sqlite3, subprocess, threading
+import base64, json, os, re, sqlite3, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -19,6 +19,70 @@ REFRESH_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'refresh_
 _REFRESH_LOCK = threading.Lock()
 THUMBS_DIR = r'D:\git\teams-db\thumbs'
 CMD_RE = re.compile(r'^\s*<!--.*?-->\s*', re.S)
+FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="7" fill="#5b5fc7"/>'
+    '<rect x="6" y="8" width="20" height="14" rx="3.5" fill="#fff"/>'
+    '<path d="M11 22 L11 27 L16 22 Z" fill="#fff"/>'
+    '<circle cx="12" cy="15" r="1.7" fill="#5b5fc7"/>'
+    '<circle cx="16" cy="15" r="1.7" fill="#5b5fc7"/>'
+    '<circle cx="20" cy="15" r="1.7" fill="#5b5fc7"/>'
+    '</svg>'
+)
+FAVICON_ICO_B64 = (
+    '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'
+)
 
 def db():
     con = sqlite3.connect('file:///' + DB.replace('\\', '/') + '?mode=ro', uri=True)
@@ -250,7 +314,8 @@ def read_thumb(fid):
 
 
 PAGE = '''<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><title>Teams Record Viewer</title><link rel="icon" type="image/svg+xml" href="/favicon.ico">
+<html lang="ko"><head><meta charset="utf-8"><title>Teams Record Viewer</title><link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:'Malgun Gothic','Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;color:#222}
@@ -558,6 +623,32 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_favicon(self, body, ctype, include_body=True):
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'public, max-age=604800')
+        self.end_headers()
+        if include_body:
+            self.wfile.write(body)
+
+    def do_HEAD(self):
+        u = urlparse(self.path)
+        if u.path == '/':
+            body = PAGE.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.end_headers()
+        elif u.path == '/favicon.ico':
+            self._send_favicon(base64.b64decode(FAVICON_ICO_B64), 'image/x-icon', include_body=False)
+        elif u.path == '/favicon.svg':
+            self._send_favicon(FAVICON_SVG.encode('utf-8'), 'image/svg+xml', include_body=False)
+        else:
+            self.send_error(404)
+
     def do_POST(self):
         u = urlparse(self.path)
         if u.path == '/api/refresh':
@@ -604,20 +695,11 @@ class H(BaseHTTPRequestHandler):
                 self._send(json.dumps(api_messages(kind, cid), ensure_ascii=False).encode('utf-8'),
                            'application/json; charset=utf-8')
             elif u.path == '/favicon.ico':
-                ico = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
-                       '<rect width="32" height="32" rx="7" fill="#5b5fc7"/>'
-                       '<rect x="6" y="8" width="20" height="14" rx="3.5" fill="#fff"/>'
-                       '<path d="M11 22 L11 27 L16 22 Z" fill="#fff"/>'
-                       '<circle cx="12" cy="15" r="1.7" fill="#5b5fc7"/>'
-                       '<circle cx="16" cy="15" r="1.7" fill="#5b5fc7"/>'
-                       '<circle cx="20" cy="15" r="1.7" fill="#5b5fc7"/>'
-                       '</svg>').encode('utf-8')
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/svg+xml')
-                self.send_header('Content-Length', str(len(ico)))
-                self.send_header('Cache-Control', 'public, max-age=604800')
-                self.end_headers()
-                self.wfile.write(ico)
+                ico = base64.b64decode(FAVICON_ICO_B64)
+                self._send_favicon(ico, 'image/x-icon')
+            elif u.path == '/favicon.svg':
+                svg = FAVICON_SVG.encode('utf-8')
+                self._send_favicon(svg, 'image/svg+xml')
             elif u.path.startswith('/thumb/'):
                 fid = u.path[len('/thumb/'):]
                 data, ctype = read_thumb(fid)
