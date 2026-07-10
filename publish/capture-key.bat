@@ -17,7 +17,8 @@ if errorlevel 1 (
   )
 )
 
-echo Start KnoxTeams key capture. KnoxTeams must be installed and login-ready.
+echo Recapturing dbkey.secret for the current Knox Teams login on this Windows installation.
+echo KnoxTeams must be installed and signed in. The key is written only to %KEY%.
 python "%WORK%\spawn_key.py"
 if errorlevel 1 (
   echo ERROR: spawn_key.py failed.

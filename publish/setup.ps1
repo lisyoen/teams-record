@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$KeyBackup,
     [string]$DataBackup,
-    [switch]$ShortcutOnly
+    [switch]$ShortcutOnly,
+    [switch]$CheckOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,8 +39,8 @@ function Test-Admin {
 function Ensure-Admin {
     if (Test-Admin) { return }
     $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
-    if ($KeyBackup) { $args += @('-KeyBackup', "`"$KeyBackup`"") }
     if ($DataBackup) { $args += @('-DataBackup', "`"$DataBackup`"") }
+    if ($ShortcutOnly) { $args += '-ShortcutOnly' }
     Start-Process -FilePath 'powershell.exe' -ArgumentList $args -Verb RunAs
     exit
 }
@@ -49,6 +49,52 @@ function Ensure-Directory([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) {
         New-Item -ItemType Directory -Path $Path -Force | Out-Null
     }
+}
+
+function Get-RequiredSources {
+    $items = New-Object System.Collections.Generic.List[object]
+
+    $viewerSource = Join-Path $RepoRoot 'viewer'
+    foreach ($name in @('server.py', 'merge_archive.py', 'refresh_archive.bat', 'start_viewer.bat', 'teams-viewer.bat')) {
+        $items.Add([pscustomobject]@{
+            Group = 'viewer'
+            Name = $name
+            Source = Join-Path $viewerSource $name
+            Destination = Join-Path $ViewerDir $name
+        }) | Out-Null
+    }
+
+    $workSource = Join-Path $PSScriptRoot 'work'
+    foreach ($name in @('decrypt_export.js', 'sqlite3.js', 'sqlite3-binding.js', 'spawn_key.py', 'hook_napi.py')) {
+        $items.Add([pscustomobject]@{
+            Group = 'work'
+            Name = $name
+            Source = Join-Path $workSource $name
+            Destination = Join-Path $WorkDir $name
+        }) | Out-Null
+    }
+
+    return @($items)
+}
+
+function Test-Prerequisites([switch]$Quiet) {
+    $missing = @()
+    foreach ($item in Get-RequiredSources) {
+        if (-not (Test-Path -LiteralPath $item.Source -PathType Leaf)) {
+            $missing += $item
+        }
+    }
+
+    if ($missing.Count -eq 0) {
+        if (-not $Quiet) { Add-Summary "required source files are present" }
+        return $true
+    }
+
+    Write-Host "[MISSING] required source files"
+    foreach ($item in $missing) {
+        Write-Host " - [$($item.Group)] $($item.Source)"
+    }
+    return $false
 }
 
 function Copy-RequiredFile([string]$Source, [string]$Destination) {
@@ -64,16 +110,20 @@ function Refresh-EnvironmentPath {
     $env:Path = "$machine;$user"
 }
 
-function Get-PythonVersion {
+function Get-PythonVersionLine {
     $cmd = Get-Command python -ErrorAction SilentlyContinue
     if (-not $cmd) { return $null }
     try {
-        $line = (& python --version 2>&1 | Select-Object -First 1).ToString()
-        if ($line -match 'Python\s+(\d+)\.(\d+)\.(\d+)') {
-            return [version]"$($Matches[1]).$($Matches[2]).$($Matches[3])"
-        }
+        return (& python --version 2>&1 | Select-Object -First 1).ToString()
     } catch {
         return $null
+    }
+}
+
+function Get-PythonVersion {
+    $line = Get-PythonVersionLine
+    if ($line -and $line -match 'Python\s+(\d+)\.(\d+)\.(\d+)') {
+        return [version]"$($Matches[1]).$($Matches[2]).$($Matches[3])"
     }
     return $null
 }
@@ -106,18 +156,16 @@ function Install-Python311 {
 }
 
 function Install-Files {
+    if (-not (Test-Prerequisites -Quiet)) {
+        throw 'Required source file check failed.'
+    }
+
     Ensure-Directory $ViewerDir
     Ensure-Directory $ThumbsDir
     Ensure-Directory $WorkDir
 
-    $viewerFiles = @('server.py', 'merge_archive.py', 'refresh_archive.bat', 'start_viewer.bat', 'teams-viewer.bat')
-    foreach ($name in $viewerFiles) {
-        Copy-RequiredFile (Join-Path (Join-Path $RepoRoot 'viewer') $name) (Join-Path $ViewerDir $name)
-    }
-
-    $workFiles = @('decrypt_export.js', 'sqlite3.js', 'sqlite3-binding.js', 'spawn_key.py', 'hook_napi.py')
-    foreach ($name in $workFiles) {
-        Copy-RequiredFile (Join-Path (Join-Path $PSScriptRoot 'work') $name) (Join-Path $WorkDir $name)
+    foreach ($item in Get-RequiredSources) {
+        Copy-RequiredFile $item.Source $item.Destination
     }
 
     if (-not (Test-Path -LiteralPath $ViewerBat)) {
@@ -126,31 +174,30 @@ function Install-Files {
     Add-Summary "viewer and decrypt runtime files deployed"
 }
 
-function Restore-Key {
+function Notice-Key {
     $dest = Join-Path $WorkDir 'dbkey.secret'
-    $packaged = Join-Path (Join-Path $PSScriptRoot 'secrets') 'dbkey.secret'
-
-    if (Test-Path -LiteralPath $packaged) {
-        Copy-Item -LiteralPath $packaged -Destination $dest -Force
-        Add-Summary "dbkey.secret restored from publish\secrets"
-        return
-    }
-
-    if ($KeyBackup) {
-        if (-not (Test-Path -LiteralPath $KeyBackup)) {
-            throw "KeyBackup does not exist: $KeyBackup"
-        }
-        Copy-Item -LiteralPath $KeyBackup -Destination $dest -Force
-        Add-Summary "dbkey.secret restored from KeyBackup"
-        return
-    }
 
     if (Test-Path -LiteralPath $dest) {
         Add-Summary "existing dbkey.secret kept in WORK"
+        Write-Host "No key is copied from publish or git."
         return
     }
 
-    Add-WarningLine "dbkey.secret is missing. After KnoxTeams login, run publish\capture-key.bat to recapture it."
+    Add-WarningLine "dbkey.secret is missing. After KnoxTeams login, run publish\capture-key.bat to recapture the key for the current local Knox Teams environment."
+}
+
+function Test-DataBackupPath {
+    if (-not $DataBackup) { return }
+    if (-not (Test-Path -LiteralPath $DataBackup)) {
+        throw "DataBackup does not exist: $DataBackup"
+    }
+
+    $dataRoot = (Resolve-Path -LiteralPath $DataBackup).Path.TrimEnd('\')
+    $publishRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path.TrimEnd('\')
+    if ($dataRoot.Equals($publishRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $dataRoot.StartsWith("$publishRoot\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "DataBackup must be an external backup folder, not a path under publish: $DataBackup"
+    }
 }
 
 function Restore-Data {
@@ -158,9 +205,7 @@ function Restore-Data {
         Add-WarningLine "DataBackup was not provided. First refresh will rebuild from the live KnoxTeams DB retention window."
         return
     }
-    if (-not (Test-Path -LiteralPath $DataBackup)) {
-        throw "DataBackup does not exist: $DataBackup"
-    }
+    Test-DataBackupPath
 
     $archive = Join-Path $DataBackup 'teams-archive.db'
     if (Test-Path -LiteralPath $archive) {
@@ -221,6 +266,91 @@ function New-DesktopShortcut {
     Add-Summary "desktop shortcut created: $DesktopShortcut"
 }
 
+function Write-CheckLine([string]$Status, [string]$Message) {
+    Write-Host ("[{0}] {1}" -f $Status, $Message)
+}
+
+function Test-PathWritableStatus([string]$Path) {
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        try {
+            [void][System.IO.Directory]::GetAccessControl($Path)
+            return 'exists; ACL readable (write not modified)'
+        } catch {
+            return "exists; ACL check failed: $($_.Exception.Message)"
+        }
+    }
+
+    $parent = Split-Path -Parent $Path
+    if ($parent -and (Test-Path -LiteralPath $parent -PathType Container)) {
+        return "missing; parent exists: $parent"
+    }
+    return 'missing; parent path is also missing'
+}
+
+function Invoke-CheckOnly {
+    Write-Host "teams-record setup CheckOnly"
+    Write-Host "RepoRoot: $RepoRoot"
+    Write-Host "No files, folders, shortcuts, Python packages, or scheduled tasks are changed in this mode."
+    Write-Host ""
+
+    if (Test-Admin) {
+        Write-CheckLine 'OK' 'administrator privileges: current process is elevated'
+    } else {
+        Write-CheckLine 'WARN' 'administrator privileges: current process is not elevated'
+    }
+
+    $pyLine = Get-PythonVersionLine
+    $pyVer = Get-PythonVersion
+    if ($pyVer -and $pyVer.Major -eq 3 -and $pyVer.Minor -eq 11) {
+        Write-CheckLine 'OK' "Python 3.11: $pyLine"
+    } elseif ($pyLine) {
+        Write-CheckLine 'WARN' "Python 3.11: different python found ($pyLine)"
+    } else {
+        Write-CheckLine 'MISSING' 'Python 3.11: python command not found'
+    }
+
+    if (Test-Prerequisites -Quiet) {
+        Write-CheckLine 'OK' 'required source files: all present'
+    } else {
+        Write-CheckLine 'MISSING' 'required source files: see missing list above'
+    }
+
+    foreach ($path in @($ViewerDir, $ThumbsDir, $WorkDir)) {
+        $status = Test-PathWritableStatus $path
+        if ($status -like 'exists*') {
+            Write-CheckLine 'OK' "target path: $path ($status)"
+        } else {
+            Write-CheckLine 'WARN' "target path: $path ($status)"
+        }
+    }
+
+    & schtasks /Query /TN $TaskName *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-CheckLine 'OK' "scheduled task exists: $TaskName"
+    } else {
+        Write-CheckLine 'MISSING' "scheduled task missing: $TaskName"
+    }
+
+    if (Test-Path -LiteralPath $DesktopShortcut -PathType Leaf) {
+        Write-CheckLine 'OK' "desktop shortcut exists: $DesktopShortcut"
+    } else {
+        Write-CheckLine 'MISSING' "desktop shortcut missing: $DesktopShortcut"
+    }
+
+    $keyPath = Join-Path $WorkDir 'dbkey.secret'
+    if (Test-Path -LiteralPath $keyPath -PathType Leaf) {
+        Write-CheckLine 'OK' "dbkey.secret exists in WORK (value hidden): $keyPath"
+    } else {
+        Write-CheckLine 'MISSING' "dbkey.secret missing in WORK. Run publish\capture-key.bat after KnoxTeams login."
+    }
+
+    exit 0
+}
+
+if ($CheckOnly) {
+    Invoke-CheckOnly
+}
+
 if ($ShortcutOnly) {
     New-DesktopShortcut
     Write-Host "ShortcutOnly complete."
@@ -232,9 +362,13 @@ Ensure-Admin
 Write-Host "teams-record setup"
 Write-Host "RepoRoot: $RepoRoot"
 
+if (-not (Test-Prerequisites)) {
+    throw 'Required source file check failed.'
+}
+
 Install-Python311
 Install-Files
-Restore-Key
+Notice-Key
 Restore-Data
 Register-ViewerTask
 New-DesktopShortcut
