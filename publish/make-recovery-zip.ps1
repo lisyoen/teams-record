@@ -19,7 +19,7 @@ $PackageRoot = Join-Path $StageRoot $PackageName
 $ZipPath = Join-Path $DistDir "$PackageName.zip"
 
 $publishFiles = @('README.md', 'setup.bat', 'setup.ps1', 'capture-key.bat')
-$workFiles = @('decrypt_export.js', 'sqlite3.js', 'sqlite3-binding.js', 'spawn_key.py', 'hook_napi.py')
+$workFiles = @('decrypt_export.js', 'sqlite3.js', 'sqlite3-binding.js', 'trace.js', 'spawn_key.py', 'hook_napi.py')
 $viewerFiles = @('server.py', 'merge_archive.py', 'refresh_archive.bat', 'start_viewer.bat', 'teams-viewer.bat')
 
 function Copy-WhiteListedFile([string]$Source, [string]$Destination) {

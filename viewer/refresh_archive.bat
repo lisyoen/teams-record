@@ -30,6 +30,11 @@ if not defined LIVE (
 
 echo [1/3] snapshot live DB (+wal +shm)...
 if not exist "%WORK%" mkdir "%WORK%"
+if not exist "%WORK%\dbkey.secret" (
+  echo   ERROR: dbkey.secret is missing.
+  echo   Run publish\capture-key.bat once after Knox Teams login, then open Teams Viewer again.
+  endlocal & exit /b 2
+)
 copy /y "%LIVE%" "%WORK%\snap.db" >nul 2>&1
 if exist "%LIVE%-wal" (copy /y "%LIVE%-wal" "%WORK%\snap.db-wal" >nul 2>&1) else (del /q "%WORK%\snap.db-wal" 2>nul)
 if exist "%LIVE%-shm" (copy /y "%LIVE%-shm" "%WORK%\snap.db-shm" >nul 2>&1) else (del /q "%WORK%\snap.db-shm" 2>nul)

@@ -31,7 +31,7 @@ if (-not $KnoxRoot) { $KnoxRoot = 'C:\mySingle\KnoxTeams' }
 $ViewerDir = Join-Path $InstallRoot 'viewer'
 $ThumbsDir = Join-Path $InstallRoot 'thumbs'
 $WorkDir = Join-Path $env:USERPROFILE 'teams-record-work'
-$DesktopShortcut = Join-Path $env:USERPROFILE 'Desktop\Teams 뷰어.lnk'
+$DesktopShortcut = Join-Path $env:USERPROFILE 'Desktop\Teams Viewer.lnk'
 $ViewerBat = Join-Path $ViewerDir 'teams-viewer.bat'
 $StartBat = Join-Path $ViewerDir 'start_viewer.bat'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -92,7 +92,7 @@ function Get-RequiredSources {
     }
 
     $workSource = Join-Path $PSScriptRoot 'work'
-    foreach ($name in @('decrypt_export.js', 'sqlite3.js', 'sqlite3-binding.js', 'spawn_key.py', 'hook_napi.py')) {
+    foreach ($name in @('decrypt_export.js', 'sqlite3.js', 'sqlite3-binding.js', 'trace.js', 'spawn_key.py', 'hook_napi.py')) {
         $items += [pscustomobject]@{
             Group = 'work'
             Name = $name
@@ -223,7 +223,7 @@ function Notice-Key {
         return
     }
 
-    Add-WarningLine "dbkey.secret is missing. After KnoxTeams login, run publish\capture-key.bat to recapture the key for the current local Knox Teams environment."
+    Add-WarningLine "dbkey.secret is missing. This is expected on first install. After KnoxTeams login, run publish\capture-key.bat once before opening Teams Viewer."
 }
 
 function Test-KnoxRoot {

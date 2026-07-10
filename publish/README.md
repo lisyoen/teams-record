@@ -25,7 +25,7 @@
 2. Knox Teams에 정상 로그인합니다.
 3. `publish\setup.bat`를 관리자 권한으로 실행합니다.
 4. `publish\capture-key.bat`를 실행해 현재 Knox Teams 로그인 환경 기준으로 키를 새로 확보합니다.
-5. 이후 로그온/재부팅 시 `TeamsRecordViewer` 작업 스케줄러가 refresh와 뷰어 서버를 자동 실행합니다. 수동으로 열 때는 바탕화면의 `Teams 뷰어` 바로가기를 사용합니다.
+5. 이후 로그온/재부팅 시 `TeamsRecordViewer` 작업 스케줄러가 refresh와 뷰어 서버를 자동 실행합니다. 수동으로 열 때는 바탕화면의 `Teams Viewer` 바로가기를 사용합니다.
 
 기존 `dbkey.secret`은 복원하지 않습니다. Windows 재설치 후 Knox Teams 로컬 키가 달라질 수 있으므로, 키는 현재 설치된 Knox Teams에서 재캡처하는 흐름이 정석입니다.
 
@@ -69,7 +69,7 @@ publish\capture-key.bat
 
 1. `publish\setup.bat -CheckOnly` 결과에서 필수 파일, 대상 경로, 바로가기, 키 상태를 확인합니다.
 2. 작업 스케줄러에서 `TeamsRecordViewer` 상태가 `Ready`인지 확인합니다.
-3. 바탕화면에 `Teams 뷰어` 바로가기가 있는지 확인합니다.
+3. 바탕화면에 `Teams Viewer` 바로가기가 있는지 확인합니다.
 4. `http://localhost:8799/`에 접속합니다.
 5. 뷰어에서 워크스페이스/채널/1:1 대화가 로딩되는지 확인합니다.
 
@@ -81,7 +81,7 @@ publish\capture-key.bat
 Unregister-ScheduledTask -TaskName TeamsRecordViewer -Confirm:$false
 ```
 
-그 다음 바탕화면의 `Teams 뷰어` 바로가기를 삭제하고, 필요하면 아래 폴더를 삭제합니다.
+그 다음 바탕화면의 `Teams Viewer` 바로가기를 삭제하고, 필요하면 아래 폴더를 삭제합니다.
 
 - 설치 위치(기본 `%LOCALAPPDATA%\teams-record` 또는 `<드라이브>:\teams-record`, 또는 `-InstallRoot`로 지정한 경로)
 - `%USERPROFILE%\teams-record-work`
