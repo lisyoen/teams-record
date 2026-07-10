@@ -12,9 +12,9 @@
 
 ## 경로 기준
 
-- 설치 위치 기본값은 복구 패키지를 둔 현재 드라이브의 `\teams-record`입니다. 예를 들어 `E:` 드라이브에서 실행하면 기본 설치 위치는 `E:\teams-record`입니다.
-- 다른 위치에 설치하려면 `publish\setup.bat -InstallRoot <경로>`를 사용합니다.
-- 작업 폴더는 현재 로그인한 Windows 계정의 `%USERPROFILE%\teams-record-work`입니다. 계정명은 고정하지 않습니다.
+- 설치 위치 기본값은 복구 패키지가 시스템 드라이브에 있으면 `%LOCALAPPDATA%\teams-record`, 데이터 드라이브에 있으면 `<드라이브>:\teams-record`입니다. 예를 들어 시스템 드라이브가 `C:`이고 패키지가 `D:` 드라이브에 있으면 기본 설치 위치는 `D:\teams-record`입니다.
+- 다른 위치에 설치하려면 `publish\setup.bat -InstallRoot <경로>`를 사용합니다. 기본값으로 개발자 PC 경로를 쓰지 않습니다.
+- 작업 폴더는 현재 로그인한 Windows 계정의 `%USERPROFILE%\teams-record-work`입니다. 계정명은 고정하지 않고 `%USERNAME%`, `%USERPROFILE%`, `%LOCALAPPDATA%` 기준으로 계산합니다.
 - 작업 스케줄러 `TeamsRecordViewer`도 현재 로그인한 Windows 사용자(`DOMAIN\user` 형식)를 기준으로 등록합니다.
 - Knox Teams 기본 경로는 `C:\mySingle\KnoxTeams`입니다. 다른 경로에 설치했다면 setup에는 `-KnoxRoot <경로>`를 넘기고, refresh/capture 실행 시에는 `KNOX_ROOT` 환경변수로 지정할 수 있습니다.
 - live DB는 `%APPDATA%\KnoxTeams\prd\` 아래의 메시지 DB를 자동탐지합니다.
@@ -83,7 +83,7 @@ Unregister-ScheduledTask -TaskName TeamsRecordViewer -Confirm:$false
 
 그 다음 바탕화면의 `Teams 뷰어` 바로가기를 삭제하고, 필요하면 아래 폴더를 삭제합니다.
 
-- 설치 위치(기본 `<드라이브>:\teams-record`, 또는 `-InstallRoot`로 지정한 경로)
+- 설치 위치(기본 `%LOCALAPPDATA%\teams-record` 또는 `<드라이브>:\teams-record`, 또는 `-InstallRoot`로 지정한 경로)
 - `%USERPROFILE%\teams-record-work`
 
 주의: 설치 위치를 삭제하면 `teams-archive.db`와 `thumbs\` 이력도 함께 삭제됩니다.

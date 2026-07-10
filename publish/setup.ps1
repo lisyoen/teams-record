@@ -10,13 +10,22 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $TaskName = 'TeamsRecordViewer'
-$packageDrive = Split-Path -Qualifier $PSScriptRoot
-if (-not $InstallRoot) {
-    if ($packageDrive) {
-        $InstallRoot = Join-Path "${packageDrive}\" 'teams-record'
-    } else {
-        $InstallRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'teams-record'
+
+function Get-DefaultInstallRoot {
+    $scriptDrive = Split-Path -Qualifier $PSScriptRoot
+    $sysDrive = $env:SystemDrive
+
+    if ($scriptDrive -and $sysDrive -and $scriptDrive -ieq $sysDrive) {
+        return (Join-Path $env:LOCALAPPDATA 'teams-record')
     }
+    if ($scriptDrive) {
+        return (Join-Path ($scriptDrive + '\') 'teams-record')
+    }
+    return (Join-Path $env:LOCALAPPDATA 'teams-record')
+}
+
+if (-not $InstallRoot) {
+    $InstallRoot = Get-DefaultInstallRoot
 }
 if (-not $KnoxRoot) { $KnoxRoot = 'C:\mySingle\KnoxTeams' }
 $ViewerDir = Join-Path $InstallRoot 'viewer'

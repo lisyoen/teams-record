@@ -6,7 +6,7 @@ KnoxTeams 평문 스냅샷(`teams-decrypted.db`)을 로컬에서 열람하는 �
 
 - 회사PC(lisyoen-desktop2) 로컬 전용. 서버는 `127.0.0.1:8799` 만 바인딩(외부 노출 금지).
 - 본인 계정·본인 대화 한정. `teams-decrypted.db` 는 실제 대화 본문이므로 커밋 금지(`.gitignore *.db`).
-- 뷰어는 자기 위치 기준으로 실행됩니다. 기본 복구 설치 위치는 패키지를 둔 현재 드라이브의 `\teams-record`이며, `setup.ps1 -InstallRoot`로 바꿀 수 있습니다.
+- 뷰어는 자기 위치 기준으로 실행됩니다. 기본 복구 설치 위치는 패키지가 시스템 드라이브에 있으면 `%LOCALAPPDATA%\teams-record`, 데이터 드라이브에 있으면 `<드라이브>:\teams-record`이며, `setup.ps1 -InstallRoot`로 바꿀 수 있습니다.
 
 ## 구성
 

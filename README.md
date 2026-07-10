@@ -34,8 +34,9 @@ config_<dbhash>.store → CryptoJS.AES.decrypt(store, P) → SQLCipher 키 K
 
 ## 복구 패키지 경로 기준
 
-- 기본 설치 위치는 복구 패키지를 둔 현재 드라이브의 `\teams-record`이며 `publish\setup.bat -InstallRoot <경로>`로 바꿀 수 있습니다.
-- 작업 폴더와 키 캡처 결과는 현재 Windows 사용자 기준 `%USERPROFILE%\teams-record-work`를 사용합니다.
+- 기본 설치 위치는 복구 패키지가 시스템 드라이브에 있으면 `%LOCALAPPDATA%\teams-record`, 데이터 드라이브에 있으면 `<드라이브>:\teams-record`입니다. `publish\setup.bat -InstallRoot <경로>`로 임의 지정할 수 있으며, 개발자 PC 경로를 기본값으로 쓰지 않습니다.
+- 작업 폴더와 키 캡처 결과는 현재 Windows 사용자 기준 `%USERPROFILE%\teams-record-work`를 사용합니다. 계정 기준값은 현재 로그인 사용자의 `%USERNAME%`, `%USERPROFILE%`, `%LOCALAPPDATA%`에서 계산합니다.
+- 작업 스케줄러도 현재 로그인 Windows 사용자 기준으로 등록합니다.
 - Knox DB는 `%APPDATA%\KnoxTeams\prd\`에서 자동탐지합니다.
 
 ## 로컬 뷰어 UI 디자인
