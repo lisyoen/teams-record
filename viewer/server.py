@@ -227,10 +227,37 @@ def parse_system4(content, sender):
     return '\n'.join(lines), None
 
 
-def norm(r, kind):
+def load_room_horizons(cid):
+    """For a chatroom, return (ends, others):
+    ends   = {participant_uid: consumption_horizon_end_epoch_ms}
+    others = [uid, ...] participants excluding me (the read-receipt audience).
+    ParticipantInfos JSON shape: [[uid, {"start":..,"end":..}], ...].
+    """
+    ends, others = {}, []
+    try:
+        row = q('SELECT ParticipantInfos pi FROM TB_Chatroom WHERE ChatroomID=?', (cid,))
+        pi = json.loads(row[0]['pi']) if row and row[0].get('pi') else []
+        for uid, info in pi:
+            uid = str(uid)
+            e = info.get('end') if isinstance(info, dict) else None
+            ends[uid] = e
+            if uid != MY_ID:
+                others.append(uid)
+    except Exception:
+        return {}, []
+    return ends, others
+
+def norm(r, kind, ends=None, others=None):
     m = {'id': r.get('MessageId'), 't': r.get('SentTime'), 's': str(r.get('Sender') or ''),
          'txt': clean(r.get('Content')), 're': parse_reactions(r.get('ReactionInfo')),
          'sys': None, 'label': None, 'media': None}
+    # read receipts: for my own messages in 1:1/group rooms, count participants
+    # (excluding me) whose consumption horizon (end) has passed this SentTime.
+    if others and str(r.get('Sender') or '') == MY_ID and r.get('SentTime') is not None:
+        st = r.get('SentTime')
+        rd = sum(1 for u in others if ends.get(u) is not None and ends[u] >= st)
+        m['rd'] = rd
+        m['rt'] = len(others)
     if r.get('Recalled'):
         m['sys'] = '회수된 메시지입니다'
     if kind == 'kt' and r.get('Deleted'):
@@ -287,6 +314,8 @@ def api_messages(kind, cid):
         rows = q('SELECT MessageId,Content,MessageType,SentTime,Sender,Recalled,'
                  'DeleteRequesterId,ReactionInfo,FileName FROM TB_KmMessage '
                  'WHERE ChatroomId=? ORDER BY SentTime', (cid,))
+        ends, others = load_room_horizons(cid)
+        return [norm(r, kind, ends, others) for r in rows]
     return [norm(r, kind) for r in rows]
 
 def read_thumb(fid):
@@ -357,6 +386,9 @@ main{flex:1;display:flex;min-height:0}
 .sname{font-size:12px;color:#556;margin:6px 0 3px}
 .bout{display:flex;flex-direction:column;align-items:flex-start}
 .mrow.mine .bout{align-items:flex-end}
+.rdbadge{font-size:11px;color:#8a8f98;margin:0 2px;white-space:nowrap;user-select:none}
+.rdbadge.allread{color:#3a8a4a}
+.bmeta{display:flex;flex-direction:column;align-items:flex-end;justify-content:flex-end;gap:1px}
 .bwrap{display:flex;align-items:flex-end;gap:6px;max-width:100%}
 .bubble{background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:8px 12px;font-size:14px;white-space:pre-wrap;word-break:break-word;max-width:520px;line-height:1.45}
 .bubble.me{background:#d3e9ff;border-color:#bcd8f5}
@@ -485,6 +517,19 @@ function mediaCard(md,mine){
   c.appendChild(ic);c.appendChild(meta);
   return c;
 }
+function readBadge(rd,rt){
+  // rt = number of other participants (audience). rd = how many have read.
+  if(!rt)return null;
+  const b=div('rdbadge');
+  if(rt===1){                       // 1:1 chat
+    if(rd>=1){b.textContent='읽음';b.classList.add('allread');return b;}
+    b.textContent='안읽음';return b;
+  }
+  // group chat
+  if(rd>=rt){b.textContent='모두 읽음 '+rt;b.classList.add('allread');return b;}
+  b.textContent='읽음 '+rd+'/'+rt;
+  return b;
+}
 function bubbleWrap(m,next,mine){
   const out=div('bout');
   const wrap=div('bwrap');
@@ -498,7 +543,13 @@ function bubbleWrap(m,next,mine){
   let showT=true;
   if(next&&!next.sys&&next.s===m.s&&m.t&&next.t&&sameMin(m.t,next.t))showT=false;
   const t=div('mtime');t.textContent=(showT&&m.t)?fmtT(m.t):'';
-  if(mine){wrap.appendChild(t);wrap.appendChild(contentEl);}else{wrap.appendChild(contentEl);wrap.appendChild(t);}
+  const meta=div('bmeta');
+  if(mine&&m.rt){
+    const rb=readBadge(m.rd||0,m.rt);
+    if(rb)meta.appendChild(rb);
+  }
+  meta.appendChild(t);
+  if(mine){wrap.appendChild(meta);wrap.appendChild(contentEl);}else{wrap.appendChild(contentEl);wrap.appendChild(t);}
   out.appendChild(wrap);
   if(m.re&&m.re.length){
     const rc=div('reacts'+(mine?' r':''));
