@@ -360,7 +360,10 @@ nav button.on{color:#1a73e8;border-bottom-color:#1a73e8;font-weight:bold}
 main{flex:1;display:flex;min-height:0}
 #list{width:320px;border-right:1px solid #ddd;overflow-y:auto;background:#fafafa}
 #msgs{flex:1;display:flex;flex-direction:column;min-width:0}
-#msgHead{padding:10px 16px;border-bottom:1px solid #ddd;font-weight:bold;background:#fff;min-height:41px;font-size:14px}
+#msgHead{padding:10px 16px;border-bottom:1px solid #ddd;font-weight:bold;background:#fff;min-height:41px;font-size:14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+#msgTitle{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#btnDlMd{flex:none}
+#btnDlMd[hidden]{display:none}
 #msgBody{flex:1;overflow-y:auto;padding:12px 16px;background:#f4f5f7}
 .wrow{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;font-weight:600;font-size:14px}
 .wrow:hover{background:#eef2f8}
@@ -423,13 +426,13 @@ main{flex:1;display:flex;min-height:0}
 <nav><button id="tabKt" class="on">워크스페이스-채널</button><button id="tabKm">1:1 대화</button></nav><span id="rstat" class="rstat"></span><button id="btnRefresh" class="refbtn" title="라이브 DB를 스냅샷·복호화해 누적 아카이브에 최신 내용을 append합니다">↻ 새로고침</button>
 </header>
 <main><aside id="list"></aside>
-<section id="msgs"><div id="msgHead"></div><div id="msgBody"><div class="empty">좌측에서 채널 또는 대화를 선택하세요</div></div></section>
+<section id="msgs"><div id="msgHead"><span id="msgTitle"></span><button id="btnDlMd" class="refbtn" title="현재 대화를 Markdown 으로 저장" hidden>⬇ 다운로드</button></div><div id="msgBody"><div class="empty">좌측에서 채널 또는 대화를 선택하세요</div></div></section>
 </main>
 <div id="pop" hidden></div>
 <div id="remenu" class="remenu" hidden></div>
 <div id="lightbox" hidden><span class="lbclose" title="닫기 (ESC)">&times;</span><img id="lbimg" src="" alt=""></div>
 <script>
-let B=null,MY='',selEl=null;
+let B=null,MY='',selEl=null,CUR=null;
 const $=s=>document.querySelector(s);
 const EMOJI={1:'\\uD83D\\uDC4D',2:'\\u2764\\uFE0F',3:'\\uD83D\\uDE04',4:'\\uD83D\\uDE2E',5:'\\uD83D\\uDE22',6:'\\uD83D\\uDE4F',7:'\\u2705',8:'\\uD83D\\uDC4F'};
 function div(c){const d=document.createElement('div');d.className=c;return d;}
@@ -442,6 +445,10 @@ function fmtListT(ms){if(!ms)return'';const d=new Date(ms),n=new Date();if(d.toD
 const WD=['일','월','화','수','목','금','토'];
 function fmtD(ms){const d=new Date(ms);return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' ('+WD[d.getDay()]+')';}
 function sameMin(a,b){const x=new Date(a),y=new Date(b);return x.getFullYear()===y.getFullYear()&&x.getMonth()===y.getMonth()&&x.getDate()===y.getDate()&&x.getHours()===y.getHours()&&x.getMinutes()===y.getMinutes();}
+function setMsgHead(title,canDownload){
+  $('#msgTitle').textContent=title||'';
+  $('#btnDlMd').hidden=!canDownload;
+}
 function mark(el){if(selEl)selEl.classList.remove('sel');selEl=el;el.classList.add('sel');}
 function renderKt(){
   const L=$('#list');L.innerHTML='';
@@ -475,10 +482,19 @@ function renderKm(){
   if(!B.rooms.length)L.appendChild(divT('empty','대화 없음'));
 }
 async function openConv(kind,id,title){
-  $('#msgHead').textContent=title;
+  CUR=null;
+  setMsgHead(title,false);
   $('#msgBody').innerHTML='<div class="empty">불러오는 중...</div>';
-  const ms=await (await fetch('/api/messages?kind='+kind+'&id='+encodeURIComponent(id))).json();
-  renderMsgs(ms);
+  try{
+    const ms=await (await fetch('/api/messages?kind='+kind+'&id='+encodeURIComponent(id))).json();
+    CUR={kind:kind,id:id,title:title,ms:ms};
+    setMsgHead(title,true);
+    renderMsgs(ms);
+  }catch(e){
+    CUR=null;
+    setMsgHead(title,false);
+    $('#msgBody').innerHTML='<div class="empty">불러오기 실패: '+e+'</div>';
+  }
 }
 function fmtSize(n){
   if(!n&&n!==0)return'';
@@ -597,6 +613,70 @@ function renderMsgs(ms){
   }
   box.scrollTop=box.scrollHeight;
 }
+function fmtExportTime(ms){
+  const d=new Date(ms);
+  return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes());
+}
+function fmtFileTime(ms){
+  const d=new Date(ms);
+  return d.getFullYear()+p2(d.getMonth()+1)+p2(d.getDate())+'-'+p2(d.getHours())+p2(d.getMinutes());
+}
+function safeFileTitle(title){
+  const s=(title||'conversation').replace(/[\\\\/:*?"<>|]+/g,'_').replace(/\\s+/g,'_').replace(/^_+|_+$/g,'');
+  return (s||'conversation').slice(0,80);
+}
+function mediaMd(md){
+  const tag=md.kind==='image'?'[이미지]':'[파일]';
+  const name=md.name||'(파일명 없음)';
+  const sz=fmtSize(md.size);
+  return tag+' '+name+(sz?' ('+sz+')':'');
+}
+function reactionMd(re){
+  if(!re||!re.length)return'';
+  return '반응: '+re.map(r=>(EMOJI[r.e]||('#'+r.e))+' '+r.c).join(' · ');
+}
+function buildMd(cur){
+  const ms=cur.ms||[],now=Date.now(),lines=[];
+  lines.push('# '+(cur.title||'대화'));
+  lines.push('> 내보낸 시각: '+fmtExportTime(now)+' · 메시지 '+ms.length+'건');
+  lines.push('');
+  let prevDate='';
+  for(const m of ms){
+    const d=m.t?fmtD(m.t):'';
+    if(d&&d!==prevDate){
+      lines.push('## '+d);
+      lines.push('');
+      prevDate=d;
+    }
+    if(m.sys){
+      lines.push('_'+m.sys+'_');
+    }else{
+      lines.push('**'+nm(m.s)+'** ('+(m.t?fmtT(m.t):'')+')');
+      let body='';
+      if(m.media){
+        body=mediaMd(m.media);
+      }else{
+        body=(m.label?m.label+(m.txt?'\\n':''):'')+(m.txt||'');
+      }
+      if(body)lines.push(body);
+      const reacts=reactionMd(m.re);
+      if(reacts)lines.push(reacts);
+    }
+    lines.push('');
+  }
+  return lines.join('\\n').replace(/\\s+$/,'')+'\\n';
+}
+function downloadMd(){
+  if(!CUR)return;
+  const md=buildMd(CUR);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([md],{type:'text/markdown;charset=utf-8'}));
+  a.download=safeFileTitle(CUR.title)+'_'+fmtFileTime(Date.now())+'.md';
+  document.body.appendChild(a);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  a.remove();
+}
 function showPop(ev,text){
   const p=$('#pop');p.hidden=false;p.textContent=text;
   p.style.left=Math.min(ev.pageX,window.innerWidth-280)+'px';
@@ -633,7 +713,8 @@ function setTab(k){
   $('#tabKm').classList.toggle('on',k==='km');
   selEl=null;CURTAB=k;
   if(k==='kt')renderKt();else renderKm();
-  $('#msgHead').textContent='';
+  CUR=null;
+  setMsgHead('',false);
   $('#msgBody').innerHTML='<div class="empty">좌측에서 채널 또는 대화를 선택하세요</div>';
 }
 $('#tabKt').onclick=()=>setTab('kt');
@@ -658,6 +739,7 @@ function openLightbox(src){const lb=$('#lightbox'),im=$('#lbimg');im.src=src;lb.
 function closeLightbox(){const lb=$('#lightbox');lb.hidden=true;$('#lbimg').src='';document.body.style.overflow='';}
 $('#lightbox').onclick=e=>{if(e.target.id!=='lbimg')closeLightbox();};
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#lightbox').hidden)closeLightbox();});
+$('#btnDlMd').onclick=downloadMd;
 $('#btnRefresh').onclick=doRefresh;
 (async()=>{B=await (await fetch('/api/bootstrap')).json();MY=B.my;renderKt();})();
 </script></body></html>'''
