@@ -114,7 +114,40 @@ def load_contacts():
     return c
 
 def clean(txt):
-    return CMD_RE.sub('', txt or '').strip()
+    txt = CMD_RE.sub('', txt or '').strip()
+    if not txt or txt[0] not in '[{':
+        return txt
+    try:
+        data = json.loads(txt)
+    except Exception:
+        return txt
+    vals = []
+
+    def add(v):
+        if isinstance(v, str) and v.strip():
+            vals.append(CMD_RE.sub('', v).strip())
+
+    if isinstance(data, dict):
+        for k in ('text', 'message', 'plainText'):
+            add(data.get(k))
+        body = data.get('body')
+        if isinstance(body, dict):
+            for k in ('content', 'text', 'plainText'):
+                add(body.get(k))
+        content = data.get('content')
+        if isinstance(content, dict):
+            for k in ('text', 'plainText'):
+                add(content.get(k))
+        else:
+            add(content)
+    elif isinstance(data, list):
+        for e in data:
+            if isinstance(e, dict):
+                for k in ('text', 'message', 'content'):
+                    add(e.get(k))
+            else:
+                add(e)
+    return '\n'.join(vals).strip()
 
 def parse_reactions(ri):
     out = []
@@ -165,6 +198,54 @@ def _dn(uid, data1=None):
     if sid == MY_ID:
         return (name or '이창연') + ' (AI 서비스 에이전트)'
     return name or sid
+
+
+def _room_title(row, cons):
+    title = (row.get('t') or row.get('Title') or '').strip()
+    rid = str(row.get('i') or row.get('ChatroomID') or row.get('ChatroomId') or '')
+    if title:
+        return title
+    names = []
+    for i in re.findall(r'\d{12,}', row.get('pi') or row.get('ParticipantInfos') or ''):
+        if i != MY_ID:
+            n = cons.get(i, {}).get('LocalName')
+            if n and n not in names:
+                names.append(n)
+    return ', '.join(names[:4]) if names else ('(방 ' + rid[:8] + ')')
+
+
+def _channel_title_map():
+    out = {}
+    try:
+        rows = q('SELECT ChannelID i,Title t FROM TB_Channel')
+    except Exception:
+        return out
+    for r in rows:
+        out[str(r.get('i'))] = r.get('t') or str(r.get('i'))
+    return out
+
+
+def _room_title_map(cons=None):
+    cons = cons if cons is not None else load_contacts()
+    out = {}
+    try:
+        rows = q('SELECT ChatroomID i,Title t,ParticipantInfos pi FROM TB_Chatroom')
+    except Exception:
+        return out
+    for r in rows:
+        out[str(r.get('i'))] = _room_title(r, cons)
+    return out
+
+
+def _snippet(text, term, radius=40):
+    flat = re.sub(r'\s+', ' ', text or '').strip()
+    needle = (term or '').casefold()
+    pos = flat.casefold().find(needle)
+    if pos < 0:
+        return flat[:radius * 2]
+    start = max(0, pos - radius)
+    end = min(len(flat), pos + len(term) + radius)
+    return ('…' if start else '') + flat[start:end] + ('…' if end < len(flat) else '')
 
 
 def parse_system4(content, sender):
@@ -294,17 +375,57 @@ def api_bootstrap():
     rooms = q('SELECT ChatroomID i,Title t,ParticipantInfos pi,LastMsgBody lb,LastMsgTime lt '
               'FROM TB_Chatroom ORDER BY COALESCE(LastMsgTime,0) DESC')
     for r in rooms:
-        if not r.get('t'):
-            names = []
-            for i in re.findall(r'\d{12,}', r.get('pi') or ''):
-                if i != MY_ID:
-                    n = cons.get(i, {}).get('LocalName')
-                    if n and n not in names:
-                        names.append(n)
-            r['t'] = ', '.join(names[:4]) if names else ('(방 ' + str(r['i'])[:8] + ')')
+        r['t'] = _room_title(r, cons)
         r['lb'] = clean(r.get('lb'))[:60]
         r.pop('pi', None)
     return {'my': MY_ID, 'ws': ws, 'channels': byws, 'rooms': rooms, 'contacts': cons}
+
+def api_search(term):
+    term = (term or '').strip()
+    empty = {'q': '', 'count': 0, 'truncated': False, 'results': []}
+    if not term:
+        return empty
+    needle = term.casefold()
+    channel_titles = _channel_title_map()
+    contacts = load_contacts()
+    room_titles = _room_title_map(contacts)
+    rows = []
+    like = '%' + term + '%'
+    try:
+        for r in q('SELECT MessageId,ChannelID,Content,MessageType,SentTime,Sender,Recalled,Deleted,'
+                   'ReactionInfo FROM TB_KtMessage WHERE Content LIKE ? ORDER BY SentTime DESC', (like,)):
+            if r.get('MessageType') in (4, 13):
+                continue
+            text = clean(r.get('Content'))
+            if needle not in text.casefold():
+                continue
+            cid = str(r.get('ChannelID') or '')
+            sid = str(r.get('Sender') or '')
+            rows.append({'kind': 'kt', 'id': cid, 'title': channel_titles.get(cid) or ('# ' + cid),
+                         's': sid, 'sname': _name_of(sid), 't': r.get('SentTime'),
+                         'mid': r.get('MessageId'), 'snippet': _snippet(text, term)})
+    except Exception:
+        pass
+    try:
+        for r in q('SELECT MessageId,ChatroomId,Content,MessageType,SentTime,Sender,Recalled,'
+                   'DeleteRequesterId,ReactionInfo,FileName FROM TB_KmMessage '
+                   'WHERE Content LIKE ? ORDER BY SentTime DESC', (like,)):
+            if r.get('MessageType') in (4, 13):
+                continue
+            text = clean(r.get('Content'))
+            if needle not in text.casefold():
+                continue
+            rid = str(r.get('ChatroomId') or '')
+            sid = str(r.get('Sender') or '')
+            rows.append({'kind': 'km', 'id': rid, 'title': room_titles.get(rid) or ('(방 ' + rid[:8] + ')'),
+                         's': sid, 'sname': _name_of(sid), 't': r.get('SentTime'),
+                         'mid': r.get('MessageId'), 'snippet': _snippet(text, term)})
+    except Exception:
+        pass
+    rows.sort(key=lambda r: r.get('t') or 0, reverse=True)
+    truncated = len(rows) > 300
+    results = rows[:300]
+    return {'q': term, 'count': len(results), 'truncated': truncated, 'results': results}
 
 def api_messages(kind, cid):
     if kind == 'kt':
@@ -357,6 +478,10 @@ header h1{font-size:15px;margin:0;color:#334}
 .rstat{font-size:12px;color:#889;white-space:nowrap}
 nav button{border:0;background:none;padding:9px 12px;font-size:14px;cursor:pointer;color:#888;border-bottom:2px solid transparent}
 nav button.on{color:#1a73e8;border-bottom-color:#1a73e8;font-weight:bold}
+.searchbar{display:flex;align-items:center;gap:4px;margin-left:4px}
+.searchbar input{width:220px;border:1px solid #cdd6e4;border-radius:6px;padding:6px 9px;font-size:13px}
+.searchbar button{border:1px solid #cdd6e4;background:#fff;color:#56657a;border-radius:6px;width:31px;height:31px;cursor:pointer;font-size:14px}
+.searchbar button:hover{background:#f2f6fc}
 main{flex:1;display:flex;min-height:0}
 #list{width:320px;border-right:1px solid #ddd;overflow-y:auto;background:#fafafa}
 #msgs{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -378,6 +503,14 @@ main{flex:1;display:flex;min-height:0}
 .rtitle{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rprev{font-size:12px;color:#889;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .rtime{font-size:11px;color:#aab;flex:none;align-self:flex-start;margin-top:3px}
+.sinfo{padding:8px 12px;color:#7d8898;font-size:12px;border-bottom:1px solid #e8ecf2;background:#fff}
+.srow{padding:10px 12px;border-bottom:1px solid #eceff4;cursor:pointer;background:#fff}
+.srow:hover{background:#eef2f8}
+.srow.sel{background:#e3ecfb}
+.stitle{font-size:13px;font-weight:700;color:#27364a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.smeta{font-size:11px;color:#8a96a8;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ssnip{font-size:12px;color:#4e5968;margin-top:5px;line-height:1.35;word-break:break-word}
+.ssnip mark{background:#fff1a8;color:inherit;padding:0 1px;border-radius:2px}
 .dsep{text-align:center;color:#66788a;font-size:12px;margin:16px 0 10px}
 .sysline{text-align:center;color:#98a2ad;font-size:12px;margin:8px 0}
 .mrow{display:flex;margin:2px 0;align-items:flex-start}
@@ -395,6 +528,7 @@ main{flex:1;display:flex;min-height:0}
 .bwrap{display:flex;align-items:flex-end;gap:6px;max-width:100%}
 .bubble{background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:8px 12px;font-size:14px;white-space:pre-wrap;word-break:break-word;max-width:520px;line-height:1.45}
 .bubble.me{background:#d3e9ff;border-color:#bcd8f5}
+.mrow.hit .bubble,.mrow.hit .mediacard,.mrow.hit .imgcard .thumb,.mrow.hit .imgcard .thumbimg{box-shadow:0 0 0 3px #ffe28a;background:#fff7d0}
 .mtime{font-size:11px;color:#9aa5b0;flex:none;padding-bottom:2px}
 .reacts{display:flex;gap:4px;margin:3px 2px 2px;flex-wrap:wrap}
 .reacts.r{justify-content:flex-end}
@@ -423,7 +557,7 @@ main{flex:1;display:flex;min-height:0}
 .empty{color:#99a;text-align:center;margin-top:40px;font-size:13px}
 </style></head><body>
 <header><h1>Teams Record Viewer</h1>
-<nav><button id="tabKt" class="on">워크스페이스-채널</button><button id="tabKm">1:1 대화</button></nav><span id="rstat" class="rstat"></span><button id="btnRefresh" class="refbtn" title="라이브 DB를 스냅샷·복호화해 누적 아카이브에 최신 내용을 append합니다">↻ 새로고침</button>
+<nav><button id="tabKt" class="on">워크스페이스-채널</button><button id="tabKm">1:1 대화</button></nav><div class="searchbar"><input id="searchQ" placeholder="대화 검색" autocomplete="off"><button id="btnSearch" title="검색">⌕</button></div><span id="rstat" class="rstat"></span><button id="btnRefresh" class="refbtn" title="라이브 DB를 스냅샷·복호화해 누적 아카이브에 최신 내용을 append합니다">↻ 새로고침</button>
 </header>
 <main><aside id="list"></aside>
 <section id="msgs"><div id="msgHead"><span id="msgTitle"></span><button id="btnDlMd" class="refbtn" title="현재 대화를 Markdown 으로 저장" hidden>⬇ 다운로드</button></div><div id="msgBody"><div class="empty">좌측에서 채널 또는 대화를 선택하세요</div></div></section>
@@ -432,7 +566,7 @@ main{flex:1;display:flex;min-height:0}
 <div id="remenu" class="remenu" hidden></div>
 <div id="lightbox" hidden><span class="lbclose" title="닫기 (ESC)">&times;</span><img id="lbimg" src="" alt=""></div>
 <script>
-let B=null,MY='',selEl=null,CUR=null;
+let B=null,MY='',selEl=null,CUR=null,SEARCH=null;
 const $=s=>document.querySelector(s);
 const EMOJI={1:'\\uD83D\\uDC4D',2:'\\u2764\\uFE0F',3:'\\uD83D\\uDE04',4:'\\uD83D\\uDE2E',5:'\\uD83D\\uDE22',6:'\\uD83D\\uDE4F',7:'\\u2705',8:'\\uD83D\\uDC4F'};
 function div(c){const d=document.createElement('div');d.className=c;return d;}
@@ -442,6 +576,7 @@ function sub(id){const c=(B.contacts||{})[id]||{};const p=[];if(c.Department)p.p
 function p2(n){return String(n).padStart(2,'0');}
 function fmtT(ms){const d=new Date(ms);return p2(d.getHours())+':'+p2(d.getMinutes());}
 function fmtListT(ms){if(!ms)return'';const d=new Date(ms),n=new Date();if(d.toDateString()===n.toDateString())return fmtT(ms);return p2(d.getMonth()+1)+'-'+p2(d.getDate());}
+function fmtSearchT(ms){if(!ms)return'';const d=new Date(ms);return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes());}
 const WD=['일','월','화','수','목','금','토'];
 function fmtD(ms){const d=new Date(ms);return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' ('+WD[d.getDay()]+')';}
 function sameMin(a,b){const x=new Date(a),y=new Date(b);return x.getFullYear()===y.getFullYear()&&x.getMonth()===y.getMonth()&&x.getDate()===y.getDate()&&x.getHours()===y.getHours()&&x.getMinutes()===y.getMinutes();}
@@ -450,6 +585,53 @@ function setMsgHead(title,canDownload){
   $('#btnDlMd').hidden=!canDownload;
 }
 function mark(el){if(selEl)selEl.classList.remove('sel');selEl=el;el.classList.add('sel');}
+function clearSearchMode(){
+  SEARCH=null;
+  const q=$('#searchQ');if(q)q.value='';
+}
+function escHtml(s){
+  return String(s||'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function markSnippet(text,term){
+  const src=String(text||''),needle=String(term||'');
+  if(!needle)return escHtml(src);
+  const idx=src.toLocaleLowerCase().indexOf(needle.toLocaleLowerCase());
+  if(idx<0)return escHtml(src);
+  return escHtml(src.slice(0,idx))+'<mark>'+escHtml(src.slice(idx,idx+needle.length))+'</mark>'+escHtml(src.slice(idx+needle.length));
+}
+async function doSearch(){
+  const term=$('#searchQ').value.trim();
+  if(!term){
+    SEARCH=null;
+    if(CURTAB==='kt')renderKt();else renderKm();
+    return;
+  }
+  const L=$('#list');
+  L.innerHTML='<div class="empty">검색 중...</div>';
+  const res=await (await fetch('/api/search?q='+encodeURIComponent(term))).json();
+  SEARCH=res;
+  renderSearchResults(res);
+}
+function renderSearchResults(res){
+  const L=$('#list');L.innerHTML='';
+  const info=div('sinfo');
+  info.textContent='검색 결과 '+(res.count||0)+'건'+(res.truncated?' · 상위 300건만 표시':'');
+  L.appendChild(info);
+  if(!res.results||!res.results.length){
+    L.appendChild(divT('empty','검색 결과 없음'));
+    return;
+  }
+  for(const r of res.results){
+    const row=div('srow');
+    row.appendChild(divT('stitle',r.title||r.id));
+    row.appendChild(divT('smeta',(r.sname||r.s||'')+' · '+fmtSearchT(r.t)));
+    const sn=div('ssnip');
+    sn.innerHTML=markSnippet(r.snippet,res.q);
+    row.appendChild(sn);
+    row.onclick=async()=>{mark(row);await openConv(r.kind,r.id,r.title);highlightMessage(r.mid);};
+    L.appendChild(row);
+  }
+}
 function renderKt(){
   const L=$('#list');L.innerHTML='';
   for(const w of B.ws){
@@ -596,6 +778,7 @@ function renderMsgs(ms){
     if(m.sys){box.appendChild(divT('sysline',m.sys));prevSender=null;continue;}
     const mine=m.s===MY;
     const row=div('mrow'+(mine?' mine':''));
+    row.dataset.mid=m.id;
     if(!mine){
       const showHead=m.s!==prevSender;
       const av=div('av'+(showHead?'':' ghost'));
@@ -612,6 +795,16 @@ function renderMsgs(ms){
     prevSender=m.s;
   }
   box.scrollTop=box.scrollHeight;
+}
+function highlightMessage(mid){
+  if(mid===undefined||mid===null)return;
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    const el=document.querySelector('[data-mid="'+CSS.escape(String(mid))+'"]');
+    if(!el)return;
+    el.scrollIntoView({block:'center'});
+    el.classList.add('hit');
+    setTimeout(()=>el.classList.remove('hit'),1800);
+  }));
 }
 function fmtExportTime(ms){
   const d=new Date(ms);
@@ -709,6 +902,7 @@ function positionReMenu(ev){
 function hideReMenu(){$('#remenu').hidden=true;}
 document.addEventListener('click',()=>{$('#pop').hidden=true;hideReMenu();});
 function setTab(k){
+  clearSearchMode();
   $('#tabKt').classList.toggle('on',k==='kt');
   $('#tabKm').classList.toggle('on',k==='km');
   selEl=null;CURTAB=k;
@@ -740,6 +934,9 @@ function closeLightbox(){const lb=$('#lightbox');lb.hidden=true;$('#lbimg').src=
 $('#lightbox').onclick=e=>{if(e.target.id!=='lbimg')closeLightbox();};
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#lightbox').hidden)closeLightbox();});
 $('#btnDlMd').onclick=downloadMd;
+$('#btnSearch').onclick=doSearch;
+$('#searchQ').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
+$('#searchQ').addEventListener('input',e=>{if(!e.target.value.trim()&&SEARCH){SEARCH=null;if(CURTAB==='kt')renderKt();else renderKm();}});
 $('#btnRefresh').onclick=doRefresh;
 (async()=>{B=await (await fetch('/api/bootstrap')).json();MY=B.my;renderKt();})();
 </script></body></html>'''
@@ -828,6 +1025,11 @@ class H(BaseHTTPRequestHandler):
                 if kind not in ('kt', 'km'):
                     kind = 'kt'
                 self._send(json.dumps(api_messages(kind, cid), ensure_ascii=False).encode('utf-8'),
+                           'application/json; charset=utf-8')
+            elif u.path == '/api/search':
+                qs = parse_qs(u.query)
+                term = (qs.get('q') or [''])[0].strip()
+                self._send(json.dumps(api_search(term), ensure_ascii=False).encode('utf-8'),
                            'application/json; charset=utf-8')
             elif u.path == '/favicon.ico':
                 ico = base64.b64decode(FAVICON_ICO_B64)
