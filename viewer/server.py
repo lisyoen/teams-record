@@ -92,6 +92,12 @@ def _mtime_or_zero(path):
     except OSError:
         return 0
 
+def _refresh_output_path():
+    user_profile = os.environ.get('USERPROFILE')
+    if user_profile:
+        return os.path.join(user_profile, 'teams-record-work', 'out', 'teams-decrypted.db')
+    return _SNAPSHOT
+
 def _last_lines(text, limit=20):
     return '\n'.join((text or '').splitlines()[-limit:])
 
@@ -1006,13 +1012,14 @@ class H(BaseHTTPRequestHandler):
                            'application/json; charset=utf-8')
                 return
             try:
-                before_mtime = _mtime_or_zero(_SNAPSHOT)
+                refresh_output = _refresh_output_path()
+                before_mtime = _mtime_or_zero(refresh_output)
                 proc = subprocess.run(['cmd', '/c', REFRESH_BAT], capture_output=True,
                                       text=True, encoding='utf-8', errors='replace',
                                       env={**os.environ, 'PYTHONUTF8': '1', 'PYTHONIOENCODING': 'utf-8'},
                                       stdin=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW,
                                       timeout=600, cwd=os.path.dirname(REFRESH_BAT))
-                after_mtime = _mtime_or_zero(_SNAPSHOT)
+                after_mtime = _mtime_or_zero(refresh_output)
                 ok = proc.returncode == 0 and after_mtime > before_mtime
                 _log_refresh(proc, before_mtime, after_mtime, ok)
                 import datetime as _dt

@@ -42,15 +42,17 @@ if not exist "%WORK%\snap.db" (echo   ERROR: snapshot failed & endlocal & exit /
 
 echo [2/3] decrypt snapshot -> teams-decrypted.db...
 set ELECTRON_RUN_AS_NODE=1
-set "TEAMS_DB_DIR=%DBDIR%"
-del /q "%DBDIR%\teams-decrypted.db" 2>nul
+set "TEAMS_DB_DIR=%WORK%\out"
+if not exist "%TEAMS_DB_DIR%" mkdir "%TEAMS_DB_DIR%"
+del /q "%WORK%\out\teams-decrypted.db*" 2>nul
 "%KEXE%" "%WORK%\decrypt_export.js"
 if errorlevel 1 (echo   ERROR: decrypt failed with exit code %errorlevel% & endlocal & exit /b 2)
-if not exist "%DBDIR%\teams-decrypted.db" (echo   ERROR: decrypt produced no output & endlocal & exit /b 2)
+if not exist "%WORK%\out\teams-decrypted.db" (echo   ERROR: decrypt produced no output & endlocal & exit /b 2)
 
 echo [3/4] merge into cumulative archive teams-archive.db...
-python "%~dp0merge_archive.py" "%DBDIR%\teams-decrypted.db" "%DBDIR%\teams-archive.db"
+python "%~dp0merge_archive.py" "%WORK%\out\teams-decrypted.db" "%DBDIR%\teams-archive.db"
 if errorlevel 1 (echo   ERROR: merge failed & endlocal & exit /b 3)
+copy /y "%WORK%\out\teams-decrypted.db" "%DBDIR%\teams-decrypted.db" >nul 2>nul
 
 echo [4/4] accumulate image thumbnails (app evicts old ones; keep forever)...
 set THUMBSRC=%APPDATA%\KnoxTeams\prd\thumbs
@@ -59,4 +61,4 @@ if not exist "%THUMBDST%" mkdir "%THUMBDST%"
 if exist "%THUMBSRC%" (xcopy /y /q /i "%THUMBSRC%\*" "%THUMBDST%\" >nul 2>&1)
 
 echo refresh done.
-endlocal
+endlocal & exit /b 0
