@@ -74,8 +74,19 @@ console.log('SRC   = ' + SRC);
 console.log('OUT   = ' + OUT);
 console.log('KEY   = ' + keySource);
 
-const db = new sqlite3.Database(SRC, sqlite3.OPEN_READONLY, (err) => {
-  if (err) { fail('OPEN_ERR ' + err.message, 5); }
+// SQLCipher 의 ATTACH ... KEY '' + sqlcipher_export 는 소스 연결이 READWRITE 여야 동작한다.
+// 원본 훼손(WAL 생성 등)을 막기 위해 원본을 임시 복사본으로 떠서 그 복사본을 연다.
+const TMPSRC = OUT + '.srccopy';
+for (const suff of ['', '-wal', '-shm']) { try { fs.unlinkSync(TMPSRC + suff); } catch (e) {} }
+try {
+  fs.copyFileSync(SRC, TMPSRC);
+  for (const suff of ['-wal', '-shm']) { if (fs.existsSync(SRC + suff)) fs.copyFileSync(SRC + suff, TMPSRC + suff); }
+} catch (e) { fail('failed to stage source copy: ' + e.message, 5); }
+
+function cleanupTmp() { for (const suff of ['', '-wal', '-shm']) { try { fs.unlinkSync(TMPSRC + suff); } catch (e) {} } }
+
+const db = new sqlite3.Database(TMPSRC, sqlite3.OPEN_READWRITE, (err) => {
+  if (err) { cleanupTmp(); fail('OPEN_ERR ' + err.message, 5); }
 });
 db.serialize(() => {
   db.run("PRAGMA cipher_compatibility=4");
@@ -84,7 +95,7 @@ db.serialize(() => {
   db.get("SELECT sqlcipher_export('plaintext') AS r", (e) => {
     if (e) { console.log('EXPORT_ERR ' + e.message + ' (wrong key or not SQLCipher?)'); }
     else { console.log('EXPORT_OK'); }
-    db.run("DETACH DATABASE plaintext", () => { db.close(() => { verify(!!e); }); });
+    db.run("DETACH DATABASE plaintext", () => { db.close(() => { cleanupTmp(); verify(!!e); }); });
   });
 });
 
