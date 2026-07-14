@@ -4,7 +4,7 @@
 - Data source: viewer package root teams-archive.db, falling back to teams-decrypted.db.
 - UI spec: teams-record repo design/viewer-ui-design.md (commit 6e2f93e) + assets/04 bubble layout.
 """
-import base64, json, os, re, sqlite3, subprocess, threading
+import base64, json, os, re, sqlite3, subprocess, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -1070,4 +1070,11 @@ def main():
         pass
 
 if __name__ == '__main__':
+    # pythonw(무콘솔) 기동 시 sys.stdout/err 가 None -> 기동 print()/예외가 크래시.
+    # 로그 파일로 폴백하여 무창 백그라운드에서도 안전 동작 + 진단 로그 확보.
+    if sys.stdout is None or sys.stderr is None:
+        _logp = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'viewer.log')
+        _lf = open(_logp, 'a', encoding='utf-8', buffering=1)
+        sys.stdout = _lf
+        sys.stderr = _lf
     main()
