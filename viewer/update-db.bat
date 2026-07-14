@@ -10,15 +10,13 @@ REM Prereq: Knox login history + dbkey.secret + KnoxTeams.exe (same as refresh_a
 
 setlocal
 for %%I in ("%~dp0..") do set "DBDIR=%%~fI"
-set "PY=python"
 
 echo teams-record update-db (on-demand refresh)
 echo Target DB dir: %DBDIR%
 echo(
 
 echo ==== BEFORE ====
-call :counts "%DBDIR%\teams-decrypted.db" teams-decrypted.db
-call :counts "%DBDIR%\teams-archive.db"   teams-archive.db
+call :counts
 echo(
 
 echo ==== REFRESH (snapshot -^> decrypt -^> merge -^> thumbs) ====
@@ -27,8 +25,7 @@ set "RC=%ERRORLEVEL%"
 echo(
 
 echo ==== AFTER ====
-call :counts "%DBDIR%\teams-decrypted.db" teams-decrypted.db
-call :counts "%DBDIR%\teams-archive.db"   teams-archive.db
+call :counts
 echo(
 
 if "%RC%"=="0" (
@@ -40,11 +37,5 @@ if "%RC%"=="0" (
 endlocal & exit /b %RC%
 
 :counts
-REM %1 = db path, %2 = label
-if not exist "%~1" (
-  echo   %~2 : (missing)
-  exit /b 0
-)
-%PY% -c "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);q=c.cursor();kt=q.execute('select count(*) from TB_KtMessage').fetchone()[0];km=q.execute('select count(*) from TB_KmMessage').fetchone()[0];c.close();print('   {0} : channel(TB_KtMessage)={1}  dm/group(TB_KmMessage)={2}'.format(sys.argv[2],kt,km))" "%~1" "%~2" 2>nul
-if errorlevel 1 echo   %~2 : (count failed - encrypted or locked?)
+python "%~dp0_dbcount.py" "%DBDIR%\teams-decrypted.db" "%DBDIR%\teams-archive.db"
 exit /b 0
