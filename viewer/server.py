@@ -18,6 +18,7 @@ PORT = 8799
 MY_ID = '754107854600802305'
 REFRESH_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'refresh_archive.bat')
 _REFRESH_LOCK = threading.Lock()
+CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000) if os.name == 'nt' else 0
 THUMBS_DIR = os.path.join(_ROOT, 'thumbs')
 CMD_RE = re.compile(r'^\s*<!--.*?-->\s*', re.S)
 FAVICON_SVG = (
@@ -84,6 +85,23 @@ FAVICON_ICO_B64 = (
     'KIy91N+7qTs4YQCZc9gjOHvQteMP9ygd+y6x7hBrYMw0Vm73VUCkoXUU1pizFv4L/S9vejEkD5Bcxiw89JHJ7I3Ektc8TkJP'
     'WzEfFzFYvr3JBckLkQKROgtwP1vv+319t5yT4PRJyev+C65j5tnNDs5hAAAAAElFTkSuQmCC'
 )
+
+def _mtime_or_zero(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0
+
+def _last_lines(text, limit=20):
+    return '\n'.join((text or '').splitlines()[-limit:])
+
+def _log_refresh(proc, before_mtime, after_mtime, ok):
+    import datetime as _dt
+    stamp = _dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print('[%s] refresh returncode=%s ok=%s decrypted_mtime_before=%.6f after=%.6f' %
+          (stamp, getattr(proc, 'returncode', None), ok, before_mtime, after_mtime), flush=True)
+    print('[%s] refresh stdout tail:\n%s' % (stamp, _last_lines(getattr(proc, 'stdout', ''))), flush=True)
+    print('[%s] refresh stderr tail:\n%s' % (stamp, _last_lines(getattr(proc, 'stderr', ''))), flush=True)
 
 def db():
     con = sqlite3.connect('file:///' + DB.replace('\\', '/') + '?mode=ro', uri=True)
@@ -988,22 +1006,31 @@ class H(BaseHTTPRequestHandler):
                            'application/json; charset=utf-8')
                 return
             try:
+                before_mtime = _mtime_or_zero(_SNAPSHOT)
                 proc = subprocess.run(['cmd', '/c', REFRESH_BAT], capture_output=True,
                                       text=True, encoding='utf-8', errors='replace',
                                       env={**os.environ, 'PYTHONUTF8': '1', 'PYTHONIOENCODING': 'utf-8'},
+                                      stdin=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW,
                                       timeout=600, cwd=os.path.dirname(REFRESH_BAT))
-                ok = proc.returncode == 0
+                after_mtime = _mtime_or_zero(_SNAPSHOT)
+                ok = proc.returncode == 0 and after_mtime > before_mtime
+                _log_refresh(proc, before_mtime, after_mtime, ok)
                 import datetime as _dt
                 at = _dt.datetime.now().strftime('%H:%M:%S')
-                tail = (proc.stdout or '').strip().replace('\n', ' ')[-200:]
-                err = None if ok else ('exit %d: %s' % (proc.returncode, tail))
+                tail_text = ((proc.stderr or '').strip() or (proc.stdout or '').strip()).replace('\n', ' ')
+                if ok:
+                    err = None
+                elif proc.returncode == 0:
+                    err = ('복호화 산출물 미갱신 — 복호화 실패 의심: ' + tail_text[-300:])[:400]
+                else:
+                    err = ('exit %d: %s' % (proc.returncode, tail_text[-320:]))[:400]
                 self._send(json.dumps({'ok': ok, 'at': at, 'error': err}).encode('utf-8'),
                            'application/json; charset=utf-8')
             except subprocess.TimeoutExpired:
                 self._send(json.dumps({'ok': False, 'error': '\uc2dc\uac04 \ucd08\uacfc(600s)'}).encode('utf-8'),
                            'application/json; charset=utf-8')
             except Exception as e:
-                self._send(json.dumps({'ok': False, 'error': str(e)[:200]}).encode('utf-8'),
+                self._send(json.dumps({'ok': False, 'error': str(e)[:400]}).encode('utf-8'),
                            'application/json; charset=utf-8')
             finally:
                 _REFRESH_LOCK.release()
