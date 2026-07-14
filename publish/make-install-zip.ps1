@@ -7,7 +7,7 @@
 
   zip 루트 구조:
     publish\  install.bat install.ps1 setup.bat setup.ps1 capture-key.bat README.md
-    publish\work\  decrypt_export.js sqlite3.js sqlite3-binding.js trace.js spawn_key.py hook_napi.py
+    publish\work\  decrypt_export.js decrypt_db.js decrypt-db.bat sqlite3.js sqlite3-binding.js trace.js spawn_key.py hook_napi.py
     viewer\  server.py merge_archive.py refresh_archive.bat start_viewer.bat teams-viewer.bat gen_favicon.py
 
   사용법:
@@ -30,7 +30,7 @@ $PackageRoot = Join-Path $StageRoot $PackageName
 $ZipPath     = Join-Path $DistDir "$PackageName.zip"
 
 $publishFiles = @('README.md', 'install.bat', 'install.ps1', 'setup.bat', 'setup.ps1', 'capture-key.bat')
-$workFiles    = @('decrypt_export.js', 'sqlite3.js', 'sqlite3-binding.js', 'trace.js', 'spawn_key.py', 'hook_napi.py')
+$workFiles    = @('decrypt_export.js', 'decrypt_db.js', 'decrypt-db.bat', 'sqlite3.js', 'sqlite3-binding.js', 'trace.js', 'spawn_key.py', 'hook_napi.py')
 $viewerFiles  = @('server.py', 'merge_archive.py', 'refresh_archive.bat', 'start_viewer.bat', 'teams-viewer.bat', 'gen_favicon.py')
 
 function Copy-WhiteListedFile([string]$Source, [string]$Destination) {
