@@ -3,6 +3,10 @@
 // 암호화된 Knox Teams SQLite(SQLCipher, cipher_compatibility=4) 파일 하나를
 // 평문 SQLite 파일로 복호화한다. refresh 흐름과 무관하게 임의의 암호화 db를 지정해 쓸 수 있다.
 //
+// 검증된 decrypt_export.js 의 sqlcipher_export 경로를 그대로 따른다(소스는 OPEN_READWRITE|OPEN_CREATE).
+// 원본 무결성 보호: 이 스크립트는 넘겨받은 입력 파일을 그 자리에서 연다. 원본을 건드리고 싶지
+// 않으면 decrypt-db.bat 런처를 쓰면 된다(런처가 임시 복사본을 떠서 그 경로를 넘긴다).
+//
 // 실행: KnoxTeams.exe 를 Node 런타임으로 사용(내장 SQLCipher 바인딩 재사용).
 //   set ELECTRON_RUN_AS_NODE=1
 //   "%KNOX_ROOT%\KnoxTeams.exe" decrypt_db.js <입력암호화db> [출력평문db] [--key <값|파일>]
@@ -11,7 +15,6 @@
 //   <입력암호화db>  (필수) 복호화할 SQLCipher db 경로
 //   [출력평문db]     (선택) 생략 시 "<입력>.plain.db"
 //   --key <값|파일>  (선택) SQLCipher 키. 생략 시 %USERPROFILE%\teams-record-work\dbkey.secret 사용.
-//                    값이 기존 파일 경로면 그 파일 내용을, 아니면 값 자체를 키로 사용.
 //
 // 주의: 산출된 평문 db 는 시크릿에 준하는 사내 데이터다. 외부 반출/zip 포함 금지.
 
@@ -20,7 +23,6 @@ const fs = require('fs');
 
 function fail(msg, code) { console.log('ERROR: ' + msg); process.exit(code || 1); }
 
-// ---- 인자 파싱 ----
 const argv = process.argv.slice(2);
 let SRC = null, OUT = null, keyArg = null;
 for (let i = 0; i < argv.length; i++) {
@@ -38,9 +40,8 @@ SRC = path.resolve(SRC);
 if (!fs.existsSync(SRC)) { fail('input db not found: ' + SRC, 2); }
 if (!OUT) { OUT = SRC.replace(/\.db$/i, '') + '.plain.db'; }
 OUT = path.resolve(OUT);
-if (path.resolve(OUT) === path.resolve(SRC)) { fail('output path must differ from input', 2); }
+if (OUT === SRC) { fail('output path must differ from input', 2); }
 
-// ---- 키 결정: --key(값 또는 파일) 우선, 없으면 work\dbkey.secret ----
 const WORK = path.join(process.env.USERPROFILE || '', 'teams-record-work');
 let key = null, keySource = null;
 if (keyArg) {
@@ -58,7 +59,6 @@ if (keyArg) {
 }
 if (!key) { fail('empty key', 3); }
 
-// ---- sqlite3(SQLCipher) 바인딩 로드: work\sqlite3.js 재사용 ----
 let sqlite3;
 try {
   sqlite3 = require(path.join(WORK, 'sqlite3.js')).verbose();
@@ -74,19 +74,9 @@ console.log('SRC   = ' + SRC);
 console.log('OUT   = ' + OUT);
 console.log('KEY   = ' + keySource);
 
-// SQLCipher 의 ATTACH ... KEY '' + sqlcipher_export 는 소스 연결이 READWRITE 여야 동작한다.
-// 원본 훼손(WAL 생성 등)을 막기 위해 원본을 임시 복사본으로 떠서 그 복사본을 연다.
-const TMPSRC = OUT + '.srccopy';
-for (const suff of ['', '-wal', '-shm']) { try { fs.unlinkSync(TMPSRC + suff); } catch (e) {} }
-try {
-  fs.copyFileSync(SRC, TMPSRC);
-  for (const suff of ['-wal', '-shm']) { if (fs.existsSync(SRC + suff)) fs.copyFileSync(SRC + suff, TMPSRC + suff); }
-} catch (e) { fail('failed to stage source copy: ' + e.message, 5); }
-
-function cleanupTmp() { for (const suff of ['', '-wal', '-shm']) { try { fs.unlinkSync(TMPSRC + suff); } catch (e) {} } }
-
-const db = new sqlite3.Database(TMPSRC, sqlite3.OPEN_READWRITE, (err) => {
-  if (err) { cleanupTmp(); fail('OPEN_ERR ' + err.message, 5); }
+// decrypt_export.js 와 동일: 소스를 READWRITE|CREATE 로 연다.
+const db = new sqlite3.Database(SRC, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+  if (err) { fail('OPEN_ERR ' + err.message, 5); }
 });
 db.serialize(() => {
   db.run("PRAGMA cipher_compatibility=4");
@@ -95,7 +85,7 @@ db.serialize(() => {
   db.get("SELECT sqlcipher_export('plaintext') AS r", (e) => {
     if (e) { console.log('EXPORT_ERR ' + e.message + ' (wrong key or not SQLCipher?)'); }
     else { console.log('EXPORT_OK'); }
-    db.run("DETACH DATABASE plaintext", () => { db.close(() => { cleanupTmp(); verify(!!e); }); });
+    db.run("DETACH DATABASE plaintext", () => { db.close(() => { verify(!!e); }); });
   });
 });
 
