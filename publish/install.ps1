@@ -2,7 +2,7 @@
   teams-record 원클릭 통합 설치 스크립트
   다른 Windows ID(계정)에서도 재설치하여 사용할 수 있도록 아래 순서로 수행한다.
 
-    1. 의존성 우선 설치      : Python 3.11, frida (키 캡처용)
+    1. 의존성 우선 설치      : Python 3.11, Node.js LTS, npm/Electron, frida (키 캡처용)
     2. 백엔드 + 바탕화면 바로가기 : 뷰어/복호화 런타임 배치, Teams Viewer 바로가기
                                (키 캡처 시 Knox Teams 자동 종료 -> 재실행)
     3. 부팅 후 데이터 자동 업데이트 : TeamsRecordViewer 로그온 스케줄 등록
@@ -128,32 +128,33 @@ if (-not (Test-Path -LiteralPath $SetupPs1)) {
 }
 
 # ============================================================
-# 1. 의존성 우선 설치 (Python 3.11 + frida)
+# 1. 의존성 우선 설치 (Python 3.11 + Node.js/npm + frida)
 # ============================================================
 Write-Step '1. Dependencies'
 if ($SkipDeps) {
-    Write-Warn2 'SkipDeps set: dependency install is skipped (assumes Python 3.11 + frida already present).'
+    Write-Warn2 'SkipDeps set: dependency install is skipped (assumes Python 3.11 + Node.js/npm + frida already present).'
 } else {
     $pv = Get-PythonVersion
     if ($pv -and $pv.Major -eq 3 -and $pv.Minor -eq 11) {
         Write-OK "Python $pv already available (setup.ps1 will re-verify)"
     } else {
-        Write-Host '[*] Python 3.11 will be installed by setup.ps1 in the next step.'
+        Write-Host '[*] Python 3.11 and Node.js LTS will be installed by setup.ps1 in the next step.'
     }
 }
 
 # ============================================================
 # 2. 백엔드 + 바탕화면 바로가기 + 부팅 자동 업데이트 (setup.ps1)
 # ============================================================
-Write-Step '2. Backend + desktop shortcut + logon task (via setup.ps1)'
+Write-Step '2. Backend + Electron app + desktop shortcut + logon task (via setup.ps1)'
 $setupArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$SetupPs1`"",'-KnoxRoot',"`"$KnoxRoot`"")
 if ($DataBackup)  { $setupArgs += @('-DataBackup',"`"$DataBackup`"") }
 if ($InstallRoot) { $setupArgs += @('-InstallRoot',"`"$InstallRoot`"") }
+if ($SkipDeps)    { $setupArgs += '-SkipDependencies' }
 $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $setupArgs -Wait -PassThru -NoNewWindow
 if ($p.ExitCode -ne 0) {
     throw "setup.ps1 failed with exit code $($p.ExitCode)."
 }
-Write-OK 'setup.ps1 completed (files, shortcut, and logon task in place)'
+Write-OK 'setup.ps1 completed (files, Electron dependencies, shortcut, and logon task in place)'
 
 if (-not $SkipDeps) { Install-Frida }
 
@@ -201,7 +202,7 @@ if ($LASTEXITCODE -eq 0) {
 Write-Host ''
 Write-Host '==== Install finished ====' -ForegroundColor White
 Write-Host 'Next:'
-Write-Host '  - Desktop shortcut "Teams Viewer" opens http://localhost:8799/'
+Write-Host '  - Desktop shortcut "Teams Viewer" opens the Electron app'
 Write-Host '  - On each logon, TeamsRecordViewer refreshes the archive and starts the viewer.'
 if ($SkipKeyCapture -or -not (Test-Path -LiteralPath $KeyPath)) {
     Write-Host '  - If data does not decrypt, sign in to Knox Teams and run publish\capture-key.bat once.'

@@ -1,5 +1,5 @@
 @echo off
-REM Refresh cumulative archive from live DB, then open the viewer.
+REM Refresh cumulative archive, then open the installed Electron viewer.
 cd /d "%~dp0"
 call "%~dp0refresh_archive.bat"
 if errorlevel 1 (
@@ -8,7 +8,4 @@ if errorlevel 1 (
   pause
   exit /b %errorlevel%
 )
-start "" pythonw "%~dp0server.py"
-timeout /t 1 /nobreak >nul
-start chrome http://localhost:8799/
-if errorlevel 1 start http://localhost:8799/
+call "%~dp0..\electron\teams-viewer-electron.bat"

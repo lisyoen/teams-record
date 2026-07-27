@@ -1,100 +1,144 @@
-# teams-record 설치 방법
+# teams-record Windows 설치 패키지
 
-## 개요
+## 설치 결과
 
-이 패키지는 Knox Teams 로컬 메시지 DB를 누적 아카이브로 만들고, 브라우저에서 조회할 수 있는 Teams Record Viewer를 설치합니다. 뷰어는 순수 Python(server.py, 브라우저에서 `http://localhost:8799/` 접속)으로 동작하며 별도 Electron 앱이 아닙니다. 시크릿(키/DB/토큰/쿠키/회사데이터 원본)은 `publish`, git, zip 어디에도 포함하지 않습니다.
+`publish\install.bat` 한 번으로 로컬 백엔드와 Electron 기본 뷰어를 설치합니다.
+바탕화면의 `Teams Viewer` 바로가기는 브라우저가 아니라 설치된
+`electron.exe`를 실행합니다. Electron은 `viewer\server.py`가 준비됐는지
+확인하고, 필요하면 `pythonw.exe`로 콘솔창 없이 시작한 뒤 전용 창에서
+`http://127.0.0.1:8799/`를 표시합니다. 브라우저 자동 실행은 없습니다.
+
+시크릿, DB, 토큰, 쿠키, 로그, Knox Teams 원본 데이터는 설치 ZIP과 Git에
+포함하지 않습니다.
 
 ## 사전 조건
 
-- Knox Teams 설치 및 정상 로그인 완료
-- Windows 관리자 권한(설치 스크립트가 자동으로 권한 승격을 요청합니다)
-- 키 캡처 시 Knox Teams가 현재 Windows 설치와 현재 로그인 환경에서 실행 가능해야 함
-- 인터넷 접근(최초 1회 Python 3.11 및 frida 설치용)
+- Windows 10/11 관리자 권한(스크립트가 UAC 승격 요청)
+- Knox Teams 설치 및 현재 Windows 계정에서 로그인 가능
+- 최초 의존성 설치와 Electron 다운로드를 위한 인터넷 접근
+- 기본 Knox Teams 경로: `C:\mySingle\KnoxTeams`
 
-## 빠른 설치 (권장) - 원클릭
+## 설치
 
-1. zip 파일을 원하는 폴더에 압축 해제합니다.
-2. Knox Teams가 설치되어 있고 정상 로그인되는지 확인합니다.
-3. `publish\install.bat`를 실행합니다(관리자 권한은 자동 승격).
+1. 설치 ZIP을 일반 폴더에 압축 해제합니다.
+2. Knox Teams가 정상 로그인되는지 확인합니다.
+3. `publish\install.bat`를 실행하고 UAC를 승인합니다.
 
-`install.bat`는 다음 순서로 진행합니다.
+설치 과정은 다음 순서입니다.
 
-1. **의존성 우선 설치**: Python 3.11(없으면 설치), frida(키 캡처용)
-2. **백엔드 + 바탕화면 바로가기 설치**: 뷰어/복호화 런타임 배치, `Teams Viewer` 바로가기 생성. 이어서 DB 키 캡처가 필요하면 **Knox Teams를 자동으로 종료한 뒤 새 인스턴스로 키를 캡처하고, 캡처 후 Knox Teams를 다시 실행**합니다.
-3. **부팅 후 데이터 자동 업데이트 세팅**: 로그온 시 아카이브 갱신 + 뷰어 서버를 자동 실행하는 작업 스케줄러 `TeamsRecordViewer` 등록
+1. Python 3.11을 설치하거나 버전을 확인합니다.
+2. Node.js LTS와 npm을 설치하거나 버전을 확인합니다.
+3. viewer, Electron 소스, 복호화 런타임을 설치 위치에 배치합니다.
+4. `package-lock.json` 기준 `npm ci --include=dev`로 Electron 의존성을 설치하고
+   `electron.exe` 존재를 확인합니다.
+5. Frida를 설치하거나 import를 확인합니다.
+6. `dbkey.secret`이 없으면 Knox Teams를 종료하고 Frida spawn 방식으로 키를
+   캡처한 뒤 Knox Teams를 다시 실행합니다. 키는
+   `%USERPROFILE%\teams-record-work\dbkey.secret`에만 저장합니다.
+7. 로그온 작업 `TeamsRecordViewer`를 등록합니다. 이 작업은 아카이브를
+   갱신한 뒤 `pythonw.exe viewer\server.py`를 백그라운드로 실행합니다.
+8. 바탕화면 `Teams Viewer` 바로가기를 설치된 Electron 실행 파일에 연결합니다.
 
-설치가 끝나면 바탕화면의 `Teams Viewer` 바로가기로 `http://localhost:8799/`를 엽니다.
+기존 `teams-archive.db`, `teams-decrypted.db`, `thumbs`, `dbkey.secret`, 작업
+스냅샷과 백업은 재설치 때 덮어쓰거나 지우지 않습니다. `-DataBackup`을 직접
+지정한 경우에만 해당 외부 백업의 archive와 thumbs를 복원합니다.
 
-### install.bat 옵션
+### 옵션
 
 ```bat
 publish\install.bat -KnoxRoot C:\mySingle\KnoxTeams
 publish\install.bat -InstallRoot D:\teams-record
-publish\install.bat -DataBackup C:\backup\teams-db   (이전 이력 복원)
-publish\install.bat -SkipKeyCapture                  (키 캡처는 나중에 수동)
-publish\install.bat -SkipDeps                        (Python 3.11/frida 이미 있음)
+publish\install.bat -DataBackup C:\backup\teams-db
+publish\install.bat -SkipKeyCapture
+publish\install.bat -SkipDeps
 ```
 
-## 수동 설치 (개별 단계)
+`-SkipDeps`는 기존 Python 3.11, Node.js 18 이상, npm, Frida가 모두 준비된
+경우에만 사용합니다. Electron 패키지는 설치 무결성을 위해 계속 `npm ci`로
+검증합니다.
 
-원클릭 대신 단계별로 실행하려면 아래를 사용합니다.
+## 실행과 확인
 
-1. `publish\setup.bat`를 관리자 권한으로 실행합니다(Python 3.11 설치, 파일 배치, 바로가기, 로그온 스케줄 등록).
-2. Knox Teams를 작업표시줄/트레이까지 완전히 종료합니다.
-3. `publish\capture-key.bat`를 실행해 현재 Knox Teams 로그인 환경 기준으로 키를 확보합니다.
-4. 바탕화면의 `Teams Viewer` 바로가기를 실행합니다.
+- 평소에는 바탕화면 `Teams Viewer`를 실행합니다.
+- 설치 상태 확인: `publish\setup.bat -CheckOnly`
+- 키 캡처 재시도: Knox Teams 로그인 후 `publish\capture-key.bat`
+- 설치 직후 데이터가 비어 있으면 `viewer\teams-viewer.bat`을 한 번 실행하여
+  refresh 후 Electron을 엽니다.
 
-`capture-key.bat`는 해당 PC에서 최초 설치 후 1회 실행하면 됩니다. 이후 로그온/재부팅 시 `TeamsRecordViewer` 작업 스케줄러가 refresh와 뷰어 서버를 자동 실행합니다. Knox Teams 재로그인, 재설치, DB 키 변경 등으로 복호화가 되지 않을 때만 다시 실행합니다.
+`TeamsRecordViewer` 로그온 작업은 UI를 자동으로 띄우지 않습니다. 백엔드만
+콘솔창 없이 준비하며, 사용자가 바로가기를 누를 때 Electron 창이 열립니다.
 
-## 경로 기준
+## 안전 제거
 
-- 설치 위치 기본값은 패키지가 시스템 드라이브에 있으면 `%LOCALAPPDATA%\teams-record`, 데이터 드라이브에 있으면 `<드라이브>:\teams-record`입니다. 다른 위치는 `-InstallRoot <경로>`로 지정합니다.
-- 작업 폴더는 현재 로그인한 Windows 계정의 `%USERPROFILE%\teams-record-work`입니다. 계정명은 고정하지 않고 `%USERNAME%`, `%USERPROFILE%`, `%LOCALAPPDATA%` 기준으로 계산하므로 **다른 Windows ID에서도 그대로 재설치**할 수 있습니다.
-- 작업 스케줄러 `TeamsRecordViewer`도 현재 로그인한 Windows 사용자 기준으로 등록합니다.
-- Knox Teams 기본 경로는 `C:\mySingle\KnoxTeams`입니다. 다른 경로면 `-KnoxRoot <경로>`(setup/install) 또는 `KNOX_ROOT` 환경변수(refresh/capture)로 지정합니다.
-- live DB는 `%APPDATA%\KnoxTeams\prd\` 아래의 메시지 DB를 자동탐지합니다.
+기본 제거:
 
-## 설치 후 확인 방법
-
-1. `publish\setup.bat -CheckOnly` 결과에서 필수 파일, 대상 경로, 바로가기, 키 상태를 확인합니다.
-2. 작업 스케줄러에서 `TeamsRecordViewer` 상태가 `Ready`인지 확인합니다.
-3. 바탕화면에 `Teams Viewer` 바로가기가 있는지 확인합니다.
-4. `http://localhost:8799/`에 접속합니다.
-5. 뷰어에서 워크스페이스/채널/1:1 대화가 로딩되고, 상단 검색창으로 전체 대화 검색이 되는지 확인합니다.
-
-## 제거/초기화 방법
-
-관리자 권한 PowerShell에서:
-
-```powershell
-Unregister-ScheduledTask -TaskName TeamsRecordViewer -Confirm:$false
+```bat
+publish\uninstall.bat
 ```
 
-그 다음 바탕화면의 `Teams Viewer` 바로가기를 삭제하고, 필요하면 아래 폴더를 삭제합니다.
+다른 설치 위치를 사용했다면 같은 값을 전달합니다.
 
-- 설치 위치(기본 `%LOCALAPPDATA%\teams-record` 또는 `<드라이브>:\teams-record`, 또는 `-InstallRoot`로 지정한 경로)
-- `%USERPROFILE%\teams-record-work`
+```bat
+publish\uninstall.bat -InstallRoot D:\teams-record
+```
 
-주의: 설치 위치를 삭제하면 `teams-archive.db`와 `thumbs\` 이력도 함께 삭제됩니다.
+Python, Node.js, npm, Frida는 다른 프로그램에서도 사용할 수 있는 공유 의존성이므로 제거하지 않습니다.
 
-## 백업 권장
+기본 제거는 설치 프로그램이 만든 작업 스케줄러, 해당 설치를 가리키는
+바탕화면 바로가기, viewer/Electron 코드, Electron `node_modules`, 작업 폴더의
+복호화 런타임 파일만 제거합니다. 다음 데이터는 보존합니다.
 
-이력 보존이 필요하면 아래만 외부 백업 폴더에 복사합니다.
-
-- `<설치위치>\teams-archive.db`
+- `<설치위치>\teams-archive.db` 및 SQLite 보조 파일
+- `<설치위치>\teams-decrypted.db` 및 SQLite 보조 파일
 - `<설치위치>\thumbs\`
+- `%USERPROFILE%\teams-record-work\dbkey.secret`
+- 작업 스냅샷, 출력 DB, 로그, 사용자가 둔 백업 데이터
 
-`dbkey.secret` 백업은 참고용일 뿐 다른 Windows 설치나 다른 로그인 환경에서 유효하다는 보장이 없습니다. 키는 `publish\capture-key.bat`로 현재 Knox Teams 환경에서 캡처합니다.
+데이터까지 영구 삭제하려는 경우에만 명시적으로 실행합니다.
 
-## publish에 포함하면 안 되는 파일 목록
+```bat
+publish\uninstall.bat -DeleteData
+```
 
-아래 항목은 `publish`, git, zip 어디에도 포함하지 않습니다.
+`-DeleteData`는 위 DB/archive/thumbs와 전체
+`%USERPROFILE%\teams-record-work`를 삭제하므로 백업 여부를 먼저 확인해야
+합니다. 이 옵션 없이 데이터 삭제는 수행하지 않습니다.
 
-- `dbkey.secret` 및 모든 `*.secret`
-- `*.db`, `*.db-wal`, `*.db-shm`, `*.sqlite*`
-- 실제 Knox DB, `teams-archive.db`, `snap.db`, `wbtest.db`
-- 인증 토큰, 쿠키, 세션 파일
-- `*.store` 원본
-- 회사 내부 데이터 원본
-- `thumbs\` 실물
-- 로그와 임시 추출물(`*.log`, `*.b64` 등)
+## 제거 후 재설치 검증
+
+1. `publish\uninstall.bat` 실행
+2. DB, archive, thumbs, `dbkey.secret`, 백업 데이터가 남아 있는지 확인
+3. `publish\install.bat` 실행
+4. `publish\setup.bat -CheckOnly` 실행
+5. 바탕화면 `Teams Viewer` 실행
+6. Electron 전용 창에서 기존 대화와 검색이 보이는지 확인
+
+## 경로
+
+- 설치 위치 기본값: 패키지가 시스템 드라이브에 있으면
+  `%LOCALAPPDATA%\teams-record`, 다른 드라이브면 `<드라이브>:\teams-record`
+- 작업 폴더: `%USERPROFILE%\teams-record-work`
+- 라이브 DB 탐색: `%APPDATA%\KnoxTeams\prd\*.db`
+- 서버: `127.0.0.1:8799` 전용 바인딩
+
+## 패키지 생성 안전장치
+
+`publish\make-install-zip.ps1`은 화이트리스트 파일만 staging하고 다음 항목이
+Git 추적 파일, staging 또는 ZIP 엔트리에 있으면 실패합니다.
+
+- `node_modules`
+- `*.db`, WAL/SHM, `*.sqlite*`, SQLite 파일 헤더
+- `dbkey.secret`, `*.secret`, 키 폴더
+- 토큰, 쿠키, 세션 이름의 파일
+- 로그, store, b64, thumbs
+- data/dumps/attachments/pictures/prd 및 회사 원본 데이터 폴더
+
+ZIP에는 `publish`, `viewer`, `electron`의 설치에 필요한 소스만 들어가며
+Electron `node_modules`는 대상 Windows PC에서 `npm ci`로 설치합니다.
+
+## 검증 범위
+
+Linux에서 가능한 검증은 Python/JavaScript 구문, pytest, 패키지 잠금파일 설치,
+화이트리스트 staging, ZIP 엔트리와 민감 파일 부재 검사입니다. UAC, winget/MSI,
+Frida의 Knox Teams spawn, 작업 스케줄러, `pythonw.exe`, Windows 바로가기,
+Electron GUI와 실제 제거/재설치는 Windows에서 확인해야 합니다.

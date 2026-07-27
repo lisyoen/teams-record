@@ -4,6 +4,7 @@ param(
     [string]$InstallRoot,
     [string]$KnoxRoot,
     [switch]$ShortcutOnly,
+    [switch]$SkipDependencies,
     [switch]$CheckOnly
 )
 
@@ -29,11 +30,14 @@ if (-not $InstallRoot) {
 }
 if (-not $KnoxRoot) { $KnoxRoot = 'C:\mySingle\KnoxTeams' }
 $ViewerDir = Join-Path $InstallRoot 'viewer'
+$ElectronDir = Join-Path $InstallRoot 'electron'
 $ThumbsDir = Join-Path $InstallRoot 'thumbs'
 $WorkDir = Join-Path $env:USERPROFILE 'teams-record-work'
 $DesktopShortcut = Join-Path $env:USERPROFILE 'Desktop\Teams Viewer.lnk'
 $ViewerBat = Join-Path $ViewerDir 'teams-viewer.bat'
 $StartBat = Join-Path $ViewerDir 'start_viewer.bat'
+$ElectronLauncher = Join-Path $ElectronDir 'teams-viewer-electron.bat'
+$ElectronExe = Join-Path $ElectronDir 'node_modules\electron\dist\electron.exe'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $CurrentUser = (& whoami).Trim()
 
@@ -68,6 +72,7 @@ function Ensure-Admin {
     if ($InstallRoot) { $args += @('-InstallRoot', "`"$InstallRoot`"") }
     if ($KnoxRoot) { $args += @('-KnoxRoot', "`"$KnoxRoot`"") }
     if ($ShortcutOnly) { $args += '-ShortcutOnly' }
+    if ($SkipDependencies) { $args += '-SkipDependencies' }
     Start-Process -FilePath 'powershell.exe' -ArgumentList $args -Verb RunAs
     exit
 }
@@ -101,6 +106,22 @@ function Get-RequiredSources {
         }
     }
 
+    $electronSource = Join-Path $RepoRoot 'electron'
+    foreach ($name in @('main.js', 'package.json', 'package-lock.json', 'teams-viewer-electron.bat')) {
+        $items += [pscustomobject]@{
+            Group = 'electron'
+            Name = $name
+            Source = Join-Path $electronSource $name
+            Destination = Join-Path $ElectronDir $name
+        }
+    }
+    $items += [pscustomobject]@{
+        Group = 'electron'
+        Name = 'assets\icon.ico'
+        Source = Join-Path $electronSource 'assets\icon.ico'
+        Destination = Join-Path $ElectronDir 'assets\icon.ico'
+    }
+
     return $items
 }
 
@@ -128,6 +149,7 @@ function Copy-RequiredFile([string]$Source, [string]$Destination) {
     if (-not (Test-Path -LiteralPath $Source)) {
         throw "Required source file is missing: $Source"
     }
+    Ensure-Directory (Split-Path -Parent $Destination)
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
@@ -195,12 +217,83 @@ function Install-Python311 {
     Add-Summary "Python $version installed"
 }
 
+function Get-NodeVersion {
+    $cmd = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $null }
+    try {
+        $line = (& node --version 2>&1 | Select-Object -First 1).ToString()
+        if ($line -match 'v(\d+)\.(\d+)\.(\d+)') {
+            return [version]"$($Matches[1]).$($Matches[2]).$($Matches[3])"
+        }
+    } catch {}
+    return $null
+}
+
+function Install-NodeFromOfficialMsi {
+    Write-Host "Downloading Node.js 22 LTS installer..."
+    $baseUrl = 'https://nodejs.org/dist/latest-v22.x'
+    $sums = (Invoke-WebRequest -Uri "$baseUrl/SHASUMS256.txt").Content
+    $match = [regex]::Match($sums, '(?m)^([0-9a-f]{64})\s+(node-v([0-9.]+)-x64\.msi)$')
+    if (-not $match.Success) { throw 'Could not resolve the latest Node.js 22 x64 MSI.' }
+    $fileName = $match.Groups[2].Value
+    $expectedHash = $match.Groups[1].Value
+    $installer = Join-Path $env:TEMP $fileName
+    Invoke-WebRequest -Uri "$baseUrl/$fileName" -OutFile $installer
+    $actualHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $expectedHash) { throw "Node.js installer checksum mismatch: $installer" }
+    $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', "`"$installer`"", '/qn', '/norestart') -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Node.js installer failed with exit code $($process.ExitCode)." }
+}
+
+function Install-NodeLts {
+    $version = Get-NodeVersion
+    if ($version -and $version.Major -ge 18 -and (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
+        Add-Summary "Node.js $version and npm already available"
+        return
+    }
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($winget) {
+        Write-Host "Installing Node.js LTS using winget..."
+        & winget install -e --id OpenJS.NodeJS.LTS --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+        if ($LASTEXITCODE -ne 0) {
+            Add-WarningLine "winget Node.js install failed with exit code $LASTEXITCODE. Falling back to nodejs.org."
+            Install-NodeFromOfficialMsi
+        }
+    } else {
+        Install-NodeFromOfficialMsi
+    }
+    Refresh-EnvironmentPath
+    $version = Get-NodeVersion
+    if (-not $version -or $version.Major -lt 18) { throw 'Node.js 18 or newer is required.' }
+    if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw 'npm.cmd was not installed with Node.js.' }
+    Add-Summary "Node.js $version and npm installed"
+}
+
+function Install-ElectronDependencies {
+    if (-not (Test-Path -LiteralPath (Join-Path $ElectronDir 'package-lock.json'))) {
+        throw "Electron package-lock.json is missing: $ElectronDir"
+    }
+    Write-Host "Installing/verifying Electron dependencies with npm ci..."
+    Push-Location $ElectronDir
+    try {
+        & npm.cmd ci --include=dev --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
+    } finally {
+        Pop-Location
+    }
+    if (-not (Test-Path -LiteralPath $ElectronExe -PathType Leaf)) {
+        throw "Electron executable was not installed: $ElectronExe"
+    }
+    Add-Summary "Electron npm dependencies installed and verified"
+}
+
 function Install-Files {
     if (-not (Test-Prerequisites -Quiet)) {
         throw 'Required source file check failed.'
     }
 
     Ensure-Directory $ViewerDir
+    Ensure-Directory $ElectronDir
     Ensure-Directory $ThumbsDir
     Ensure-Directory $WorkDir
 
@@ -211,7 +304,7 @@ function Install-Files {
     if (-not (Test-Path -LiteralPath $ViewerBat)) {
         throw "Viewer batch was not installed: $ViewerBat"
     }
-    Add-Summary "viewer and decrypt runtime files deployed"
+    Add-Summary "viewer, Electron app, and decrypt runtime files deployed"
 }
 
 function Notice-Key {
@@ -292,26 +385,20 @@ function Register-ViewerTask {
 }
 
 function New-DesktopShortcut {
-    Ensure-Directory (Split-Path -Parent $DesktopShortcut)
-    $targetPath = $ViewerBat
-    $workingDir = $ViewerDir
-    if ($ShortcutOnly -and -not (Test-Path -LiteralPath $targetPath)) {
-        $legacyViewerBat = Join-Path $InstallRoot 'teams-viewer.bat'
-        if (Test-Path -LiteralPath $legacyViewerBat) {
-            $targetPath = $legacyViewerBat
-            $workingDir = $InstallRoot
-        }
+    if (-not (Test-Path -LiteralPath $ElectronExe -PathType Leaf)) {
+        throw "Electron executable is missing: $ElectronExe"
     }
+    Ensure-Directory (Split-Path -Parent $DesktopShortcut)
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($DesktopShortcut)
-    $shortcut.TargetPath = $targetPath
-    $shortcut.WorkingDirectory = $workingDir
-    $shortcut.Description = 'teams-record viewer'
-    if (Test-Path -LiteralPath (Join-Path $env:WINDIR 'System32\shell32.dll')) {
-        $shortcut.IconLocation = "$env:WINDIR\System32\shell32.dll,220"
-    }
+    $shortcut.TargetPath = $ElectronExe
+    $shortcut.Arguments = "`"$ElectronDir`""
+    $shortcut.WorkingDirectory = $ElectronDir
+    $shortcut.Description = 'Teams Viewer Electron app'
+    $icon = Join-Path $ElectronDir 'assets\icon.ico'
+    if (Test-Path -LiteralPath $icon -PathType Leaf) { $shortcut.IconLocation = $icon }
     $shortcut.Save()
-    Add-Summary "desktop shortcut created: $DesktopShortcut"
+    Add-Summary "desktop Electron shortcut created: $DesktopShortcut"
 }
 
 function Write-CheckLine([string]$Status, [string]$Message) {
@@ -361,13 +448,30 @@ function Invoke-CheckOnly {
         Write-CheckLine 'MISSING' 'Python 3.11: python command not found'
     }
 
+    $nodeVer = Get-NodeVersion
+    if ($nodeVer -and $nodeVer.Major -ge 18) {
+        Write-CheckLine 'OK' "Node.js: $nodeVer"
+    } else {
+        Write-CheckLine 'MISSING' 'Node.js 18 or newer: node command not found or too old'
+    }
+    if (Get-Command npm.cmd -ErrorAction SilentlyContinue) {
+        Write-CheckLine 'OK' "npm: $(& npm.cmd --version)"
+    } else {
+        Write-CheckLine 'MISSING' 'npm.cmd not found'
+    }
+    if (Test-Path -LiteralPath $ElectronExe -PathType Leaf) {
+        Write-CheckLine 'OK' "Electron executable: $ElectronExe"
+    } else {
+        Write-CheckLine 'MISSING' "Electron executable: $ElectronExe"
+    }
+
     if (Test-Prerequisites -Quiet) {
         Write-CheckLine 'OK' 'required source files: all present'
     } else {
         Write-CheckLine 'MISSING' 'required source files: see missing list above'
     }
 
-    foreach ($path in @($ViewerDir, $ThumbsDir, $WorkDir)) {
+    foreach ($path in @($ViewerDir, $ElectronDir, $ThumbsDir, $WorkDir)) {
         $status = Test-PathWritableStatus $path
         if ($status -like 'exists*') {
             Write-CheckLine 'OK' "target path: $path ($status)"
@@ -424,8 +528,18 @@ if (-not (Test-Prerequisites)) {
     throw 'Required source file check failed.'
 }
 
-Install-Python311
+if ($SkipDependencies) {
+    $pythonVersion = Get-PythonVersion
+    $nodeVersion = Get-NodeVersion
+    if (-not $pythonVersion -or $pythonVersion.Major -ne 3 -or $pythonVersion.Minor -ne 11) { throw 'SkipDependencies requires Python 3.11.' }
+    if (-not $nodeVersion -or $nodeVersion.Major -lt 18 -or -not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw 'SkipDependencies requires Node.js 18+ and npm.' }
+    Add-Summary "dependency installation skipped; existing Python $pythonVersion and Node.js $nodeVersion verified"
+} else {
+    Install-Python311
+    Install-NodeLts
+}
 Install-Files
+Install-ElectronDependencies
 Test-KnoxRoot
 Notice-Key
 Restore-Data

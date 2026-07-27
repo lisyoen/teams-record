@@ -4,8 +4,10 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const VIEWER_URL = 'http://127.0.0.1:8799/';
-const LIVE_START =
-  process.env.TEAMS_VIEWER_START || 'D:\\git\\teams-db\\viewer\\server.py';
+const SERVER_PATH =
+  process.env.TEAMS_VIEWER_SERVER ||
+  path.resolve(__dirname, '..', 'viewer', 'server.py');
+const START_TIMEOUT_MS = 30000;
 
 let win = null;
 
@@ -31,16 +33,21 @@ async function ensureServer() {
   }
 
   try {
-    spawn('pythonw', [LIVE_START], {
+    const server = spawn('pythonw.exe', [SERVER_PATH], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
-    }).unref();
+    });
+    // spawn failures (for example, pythonw.exe missing from PATH) are emitted
+    // asynchronously rather than thrown by spawn().
+    server.on('error', () => {});
+    server.unref();
   } catch {
     return false;
   }
 
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  const attempts = Math.ceil(START_TIMEOUT_MS / 500);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     await delay(500);
     if (await probe()) {
       return true;
@@ -87,7 +94,7 @@ async function createWindow() {
       </style>
       <h1>로컬 뷰어 서버에 연결할 수 없습니다.</h1>
       <p>127.0.0.1:8799 서버가 연결되지 않았습니다.</p>
-      <p>TeamsRecordViewer 작업 또는 teams-viewer.bat을 먼저 실행해 주세요.</p>
+      <p>설치를 다시 실행하거나 작업 스케줄러의 TeamsRecordViewer 상태를 확인해 주세요.</p>
     </html>`;
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(message)}`);
 }

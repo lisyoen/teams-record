@@ -12,7 +12,7 @@ KnoxTeams 평문 스냅샷(`teams-decrypted.db`)을 로컬에서 열람하는 �
 
 - `server.py` : Python 3.11 표준 라이브러리(`http.server` + `sqlite3`) 단일 서버. 외부 패키지 의존 없음. read-only 로 DB 조회.
 - 데이터 소스: 뷰어 루트의 `teams-archive.db`, 없으면 `teams-decrypted.db` (평문 SQLite, 키 불필요).
-- 실행 바로가기: 설치 위치의 `viewer\teams-viewer.bat` (server.py 백그라운드 기동 → 크롬으로 `http://localhost:8799/` 오픈).
+- 기본 실행 UI: 설치 위치의 Electron 앱. 바탕화면 `Teams Viewer` 바로가기가 Electron을 열고, Electron이 `server.py`를 `pythonw.exe`로 시작한 뒤 준비를 기다립니다. 브라우저는 자동으로 열지 않습니다.
 
 ## 화면
 

@@ -1,9 +1,13 @@
 @echo off
-REM Launch the Electron Teams Viewer (thin wrapper over local server 127.0.0.1:8799).
+setlocal
+REM Launch the installed Electron Teams Viewer. Electron starts/waits for server.py.
 cd /d "%~dp0"
-if not exist "%~dp0node_modules\.bin\electron.cmd" (
-  echo Electron is not installed. Run: cd /d "%~dp0"  and then  npm install
+set "ELECTRON_EXE=%~dp0node_modules\electron\dist\electron.exe"
+if not exist "%ELECTRON_EXE%" (
+  echo ERROR: Electron is not installed.
+  echo Run publish\install.bat again.
   pause
-  exit /b 1
+  endlocal & exit /b 1
 )
-start "" "%~dp0node_modules\.bin\electron.cmd" "%~dp0"
+start "" "%ELECTRON_EXE%" "%~dp0"
+endlocal
