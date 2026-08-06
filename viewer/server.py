@@ -697,6 +697,7 @@ header h1{font-size:15px;margin:0;color:#334}
 .rstat{font-size:12px;color:#889;white-space:nowrap}
 .versionbar{margin-left:auto;display:flex;align-items:center;gap:7px;white-space:nowrap}
 #verbadge{font-size:12px;color:#68758a;text-decoration:none;border:1px solid #d9e0e9;border-radius:10px;padding:2px 7px;cursor:pointer}
+#verbadge.newver{color:#4f46a5;border-color:#8b8fd8;background:#f2f1ff;font-weight:700}
 #updbtn{border:1px solid #5b5fc7;background:#5b5fc7;color:#fff;border-radius:6px;padding:5px 9px;font-size:12px;cursor:pointer}
 #updbtn[hidden]{display:none}
 #updstat{font-size:12px;color:#327a47}
@@ -1153,15 +1154,28 @@ async function doRefresh(){
   btn.disabled=false;
   setTimeout(()=>{if(!btn.disabled)st.textContent='';},8000);
 }
-async function loadVersion(){
+let lastUpdateCheck=0;
+async function checkUpdate(){
+  lastUpdateCheck=Date.now();
   try{
-    const j=await (await fetch('/api/version')).json();
-    $('#verbadge').textContent='v'+j.local;
-    $('#verbadge').title='teams-record '+j.local+' — 릴리즈노트 보기';
-    $('#verbadge').onclick=()=>window.open(j.releases,'_blank');
-    if(j.update){$('#updbtn').textContent='업데이트 (v'+j.latest+')';$('#updbtn').hidden=false;}
+    const j=await (await fetch('/api/version',{cache:'no-store'})).json();
+    const badge=$('#verbadge'),updBtn=$('#updbtn'),refreshBtn=$('#btnRefresh'),st=$('#updstat');
+    if(updBtn.disabled||refreshBtn.disabled)return;
+    badge.textContent='v'+j.local;
+    badge.title='teams-record '+j.local+' — 릴리즈노트 보기';
+    badge.onclick=()=>window.open(j.releases,'_blank');
+    if(j.update===true){
+      updBtn.textContent='업데이트 (v'+j.latest+')';updBtn.hidden=false;
+      st.textContent='새 버전 v'+j.latest+' 사용 가능';badge.classList.add('newver');
+    }else if(j.update===false){
+      updBtn.hidden=true;st.textContent='';badge.classList.remove('newver');
+    }
   }catch(e){}
 }
+setInterval(checkUpdate,60000);
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&Date.now()-lastUpdateCheck>=30000)checkUpdate();
+});
 async function doUpdate(){
   if(!confirm('최신 버전으로 업데이트할까요? 서버가 자동으로 재시작됩니다.'))return;
   const btn=$('#updbtn'),st=$('#updstat');
@@ -1198,7 +1212,7 @@ $('#searchQ').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
 $('#searchQ').addEventListener('input',e=>{if(!e.target.value.trim()&&SEARCH){SEARCH=null;if(CURTAB==='kt')renderKt();else renderKm();}});
 $('#btnRefresh').onclick=doRefresh;
 $('#updbtn').onclick=doUpdate;
-(async()=>{loadVersion();B=await (await fetch('/api/bootstrap')).json();MY=B.my;renderKt();})();
+(async()=>{checkUpdate();B=await (await fetch('/api/bootstrap')).json();MY=B.my;renderKt();})();
 </script></body></html>'''
 
 PAGE = PAGE.replace('__LOCAL_VERSION__', LOCAL_VERSION)
