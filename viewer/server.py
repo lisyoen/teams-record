@@ -1083,6 +1083,7 @@ async function loadVersion(){
   try{
     const j=await (await fetch('/api/version')).json();
     $('#verbadge').textContent='v'+j.local;
+    $('#verbadge').title='teams-record '+j.local+' — 릴리즈노트 보기';
     $('#verbadge').onclick=()=>window.open(j.releases,'_blank');
     if(j.update){$('#updbtn').textContent='업데이트 (v'+j.latest+')';$('#updbtn').hidden=false;}
   }catch(e){}
