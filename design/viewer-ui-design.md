@@ -2,7 +2,7 @@
 
 > 작성: 2026-07-08 KST
 > 출처: KnoxTeams 실제 화면 스크린샷(사용자 제공) + 대화 렌더링 스타일 레퍼런스(카카오톡형 버블). 로컬 뷰어(방식 1)의 UI 레퍼런스.
-> 대상 데이터: 평문 스냅샷 `teams-decrypted.db`(SQLite, 키 불필요). 회사PC 로컬 전용.
+> 대상 데이터: 평문 스냅샷 `teams-decrypted.db`(SQLite, 키 불필요). 로컬 전용.
 
 ## 자산(assets/)
 
@@ -56,7 +56,7 @@
 ### 정렬·버블
 
 - 상대(타인) 메시지: 좌측 정렬. 밝은 회색/흰색 계열 버블.
-- 본인(UserID=754107854600802305) 메시지: 우측 정렬. 강조색(파랑/민트 계열) 버블.
+- 본인 계정 메시지: 우측 정렬. 강조색(파랑/민트 계열) 버블.
 - 버블은 모서리 라운드 + 안쪽 패딩. 긴 텍스트는 줄바꿈, 버블 최대폭 제한(대략 영역의 70%).
 
 ### 발신자 표시(상대 메시지)
@@ -101,15 +101,15 @@
 
 ```json
 [
-  {"emoji": 1, "count": 31, "users": "754107854600802305,913717628344209409", "isMine": false},
-  {"emoji": 3, "count": 18, "users": "754107857199173633", "isMine": false}
+  {"emoji": 1, "count": 31, "users": "<본인 UserID>,<사용자 UserID>", "isMine": false},
+  {"emoji": 3, "count": 18, "users": "<사용자 UserID>", "isMine": false}
 ]
 ```
 
 - `emoji`: 반응 이모지 정수 코드. 실측 관측값 1, 3, 7, 8 등(최소 8종). 리액션 바 스크린샷의 좌→우 순서가 1-based 코드 순서일 가능성이 높다(빌드 시 확정 필요).
 - `count`: 해당 이모지 반응 수.
 - `users`: 반응한 사용자 UserID 콤마 구분 문자열. UserID → TB_KtContact/TB_KmContact.LocalName 으로 이름 매핑.
-- `isMine`: 본인(754107854600802305) 반응 포함 여부.
+- `isMine`: 본인 계정의 반응 포함 여부.
 - non-empty 표본: TB_KtMessage 76행, TB_KmMessage 30행(2026-07-08 스냅샷 기준).
 
 ### 렌더링 요구사항
@@ -121,7 +121,7 @@
 
 ## 공통 표시 규칙(데이터 매핑, teams-record-next.md 와 일관)
 
-- 발신자명 = Sender → TB_KtContact/TB_KmContact.LocalName. 본인 UserID=754107854600802305 → 우측 정렬 버블(이름 라벨 생략).
+- 발신자명 = Sender → TB_KtContact/TB_KmContact.LocalName. 본인 계정 → 우측 정렬 버블(이름 라벨 생략).
 - SentTime = epoch ms → KST. 목록은 당일 HH:MM / 이전 MM-DD, 메시지 상세는 버블 옆 HH:MM(날짜 구분선으로 일자 구분).
 - Content 의 `<!-- {"COMMAND":...} -->` 명령 프리픽스는 제거 후 표시.
 - Recalled=1 / Deleted=1 행은 '(회수/삭제됨)' 시스템 라인/뱃지.
@@ -129,5 +129,5 @@
 
 ## 참고
 
-- 뷰어 서버는 127.0.0.1 바인딩 전용(외부 노출 금지). 회사PC 로컬·본인 계정·본인 대화 한정.
+- 뷰어 서버는 127.0.0.1 바인딩 전용(외부 노출 금지). 로컬·본인 계정·본인 대화 한정.
 - teams-decrypted.db 는 실제 대화 본문이므로 절대 커밋 금지(.gitignore *.db).

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """teams-record local viewer (MVP)
-- Company-PC (lisyoen-desktop2) local only. Binds 127.0.0.1:8799 (no external exposure).
+- Local only. Binds 127.0.0.1:8799 (no external exposure).
 - Data source: viewer package root teams-archive.db, falling back to teams-decrypted.db.
 - UI spec: teams-record repo design/viewer-ui-design.md (commit 6e2f93e) + assets/04 bubble layout.
 """
@@ -16,7 +16,23 @@ _ARCHIVE = os.path.join(_ROOT, 'teams-archive.db')
 _SNAPSHOT = os.path.join(_ROOT, 'teams-decrypted.db')
 DB = _ARCHIVE if os.path.exists(_ARCHIVE) else _SNAPSHOT
 PORT = 8799
-MY_ID = '754107854600802305'
+
+
+def load_my_id(viewer_dir=None):
+    """Load the local account ID from the environment, then my_id.txt."""
+    env_value = os.environ.get('TEAMS_RECORD_MY_ID', '').strip()
+    if env_value:
+        return env_value
+    viewer_dir = viewer_dir or os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(viewer_dir, 'my_id.txt'), encoding='utf-8') as f:
+            file_value = f.read().strip()
+        return file_value or None
+    except OSError:
+        return None
+
+
+MY_ID = load_my_id()
 REFRESH_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'refresh_archive.bat')
 _REFRESH_LOCK = threading.Lock()
 _UPDATE_LOCK = threading.Lock()
@@ -323,7 +339,7 @@ def _dn(uid, data1=None):
     """Display name for a system-event participant (contact name > data1 > userId)."""
     sid = '' if uid is None else str(uid)
     name = (_name_of(sid) or data1 or '').strip()
-    if sid == MY_ID:
+    if MY_ID is not None and sid == MY_ID:
         return (name or '이창연') + ' (AI 서비스 에이전트)'
     return name or sid
 
@@ -335,7 +351,7 @@ def _room_title(row, cons):
         return title
     names = []
     for i in re.findall(r'\d{12,}', row.get('pi') or row.get('ParticipantInfos') or ''):
-        if i != MY_ID:
+        if MY_ID is None or i != MY_ID:
             n = cons.get(i, {}).get('LocalName')
             if n and n not in names:
                 names.append(n)
@@ -450,7 +466,7 @@ def load_room_horizons(cid):
             uid = str(uid)
             e = info.get('end') if isinstance(info, dict) else None
             ends[uid] = e
-            if uid != MY_ID:
+            if MY_ID is None or uid != MY_ID:
                 others.append(uid)
     except Exception:
         return {}, []
@@ -462,7 +478,8 @@ def norm(r, kind, ends=None, others=None):
          'sys': None, 'label': None, 'media': None}
     # read receipts: for my own messages in 1:1/group rooms, count participants
     # (excluding me) whose consumption horizon (end) has passed this SentTime.
-    if others and str(r.get('Sender') or '') == MY_ID and r.get('SentTime') is not None:
+    if (MY_ID is not None and others and str(r.get('Sender') or '') == MY_ID
+            and r.get('SentTime') is not None):
         st = r.get('SentTime')
         rd = sum(1 for u in others if ends.get(u) is not None and ends[u] >= st)
         m['rd'] = rd

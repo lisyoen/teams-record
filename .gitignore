@@ -27,6 +27,7 @@ __pycache__/
 *.pyc
 .env
 .env.*
+my_id.txt
 *.log
 .DS_Store
 dist/
