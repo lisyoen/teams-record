@@ -16,6 +16,8 @@ _ARCHIVE = os.path.join(_ROOT, 'teams-archive.db')
 _SNAPSHOT = os.path.join(_ROOT, 'teams-decrypted.db')
 DB = _ARCHIVE if os.path.exists(_ARCHIVE) else _SNAPSHOT
 PORT = 8799
+UPDATE_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'update.log')
+_ACTIVE_SERVER = None
 
 
 def load_my_id(viewer_dir=None):
@@ -140,6 +142,78 @@ def install_latest_viewer():
         with open(os.path.join(viewer_dir, 'VERSION'), 'w', encoding='utf-8', newline='\n') as f:
             f.write(new_version + '\n')
         return new_version
+
+
+def _log_update(message):
+    """Best-effort update/restart diagnostics; never break an installed update."""
+    try:
+        import datetime as _dt
+        with open(UPDATE_LOG, 'a', encoding='utf-8') as output:
+            output.write('[%s] %s\n' % (_dt.datetime.now().isoformat(timespec='seconds'), message))
+    except OSError:
+        pass
+
+
+def _pythonw_executable():
+    """Use pythonw beside the running interpreter on Windows when available."""
+    if os.name != 'nt':
+        return sys.executable
+    candidate = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+    return candidate if os.path.isfile(candidate) else sys.executable
+
+
+def restart_server(delay=0.8):
+    """Start the replaced server detached, then terminate this stale process."""
+    time.sleep(delay)
+    viewer_dir = os.path.dirname(os.path.abspath(__file__))
+    server_file = os.path.join(viewer_dir, 'server.py')
+    executable = _pythonw_executable()
+    try:
+        kwargs = {
+            'cwd': viewer_dir,
+            'stdin': subprocess.DEVNULL,
+            'stdout': subprocess.DEVNULL,
+            'stderr': subprocess.DEVNULL,
+            'close_fds': True,
+        }
+        if os.name == 'nt':
+            kwargs['creationflags'] = (
+                getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200)
+                | getattr(subprocess, 'DETACHED_PROCESS', 0x00000008)
+            )
+        else:
+            kwargs['start_new_session'] = True
+        subprocess.Popen([executable, server_file], **kwargs)
+        _log_update('restart spawned: %s; exiting old process' % executable)
+        os._exit(0)
+    except Exception as spawn_error:
+        _log_update('detached restart failed: %r; trying execv' % spawn_error)
+
+    # A failed spawn must not undo the installed files. Try an in-place image
+    # replacement, closing the listening socket first so the new image can bind.
+    try:
+        if _ACTIVE_SERVER is not None:
+            _ACTIVE_SERVER.server_close()
+        os.execv(executable, [executable, server_file])
+    except Exception as exec_error:
+        _log_update('restart_required=True; execv failed: %r' % exec_error)
+
+
+class ViewerHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
+def create_http_server(address, handler, attempts=10, delay=0.3, server_factory=ViewerHTTPServer):
+    """Bind with a short bounded retry while the previous Windows process exits."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return server_factory(address, handler)
+        except OSError as error:
+            last_error = error
+            if attempt + 1 < attempts:
+                time.sleep(delay)
+    raise last_error
 CMD_RE = re.compile(r'^\s*<!--.*?-->\s*', re.S)
 FAVICON_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
@@ -1089,14 +1163,27 @@ async function loadVersion(){
   }catch(e){}
 }
 async function doUpdate(){
-  if(!confirm('최신 버전으로 업데이트할까요? 업데이트 후 뷰어를 재시작해야 합니다.'))return;
+  if(!confirm('최신 버전으로 업데이트할까요? 서버가 자동으로 재시작됩니다.'))return;
   const btn=$('#updbtn'),st=$('#updstat');
   btn.disabled=true;st.textContent='업데이트 중…';
   try{
     const j=await (await fetch('/api/update',{method:'POST'})).json();
     if(j.ok){
-      const msg='업데이트 완료 — 뷰어를 재시작하세요';
+      const msg=j.restarting?'업데이트 완료 — 서버가 재시작됩니다. 잠시 후 새로고침하세요':'업데이트 완료';
       st.textContent=msg;btn.hidden=true;alert(msg);
+      if(j.restarting){
+        const expected=j.version;
+        const started=Date.now();
+        const waitForRestart=async()=>{
+          try{
+            const v=await (await fetch('/api/version',{cache:'no-store'})).json();
+            if(v.local===expected){location.reload();return;}
+          }catch(e){}
+          if(Date.now()-started<30000)setTimeout(waitForRestart,1000);
+          else location.reload();
+        };
+        setTimeout(waitForRestart,3500);
+      }
     }else{st.textContent='업데이트 실패: '+(j.error||'unknown');alert(st.textContent);}
   }catch(e){st.textContent='업데이트 오류: '+e;alert(st.textContent);}
   btn.disabled=false;
@@ -1128,6 +1215,7 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Pragma', 'no-cache')
         self.end_headers()
         self.wfile.write(body)
+        self.wfile.flush()
 
     def _send_favicon(self, body, ctype, include_body=True):
         self.send_response(200)
@@ -1175,13 +1263,15 @@ class H(BaseHTTPRequestHandler):
                 return
             try:
                 new_version = install_latest_viewer()
-                result = {'ok': True, 'version': new_version, 'restart_required': True}
+                result = {'ok': True, 'version': new_version, 'restarting': True}
             except Exception as e:
                 result = {'ok': False, 'error': str(e)[:400]}
             finally:
                 _UPDATE_LOCK.release()
             self._send(json.dumps(result, ensure_ascii=False).encode('utf-8'),
                        'application/json; charset=utf-8')
+            if result.get('restarting'):
+                threading.Thread(target=restart_server, name='update-restart', daemon=True).start()
         elif u.path == '/api/refresh':
             if not _REFRESH_LOCK.acquire(blocking=False):
                 self._send(json.dumps({'ok': False, 'error': '\uc774\ubbf8 \uac31\uc2e0 \uc911\uc785\ub2c8\ub2e4'}).encode('utf-8'),
@@ -1274,16 +1364,21 @@ class H(BaseHTTPRequestHandler):
                 pass
 
 def main():
+    global _ACTIVE_SERVER
     try:
-        srv = ThreadingHTTPServer(('127.0.0.1', PORT), H)
-    except OSError:
-        print('port %d in use; viewer seems already running' % PORT)
+        srv = create_http_server(('127.0.0.1', PORT), H)
+        _ACTIVE_SERVER = srv
+    except OSError as error:
+        print('could not bind port %d after retries: %s' % (PORT, error))
         return
     print('teams-record viewer: http://127.0.0.1:%d/' % PORT)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        srv.server_close()
+        _ACTIVE_SERVER = None
 
 if __name__ == '__main__':
     # pythonw(무콘솔) 기동 시 sys.stdout/err 가 None -> 기동 print()/예외가 크래시.
