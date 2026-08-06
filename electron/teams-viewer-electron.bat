@@ -9,5 +9,6 @@ if not exist "%ELECTRON_EXE%" (
   pause
   endlocal & exit /b 1
 )
+call "%~dp0..\viewer\update-check.bat"
 start "" "%ELECTRON_EXE%" "%~dp0"
 endlocal

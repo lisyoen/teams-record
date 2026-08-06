@@ -4,9 +4,10 @@
 - Data source: viewer package root teams-archive.db, falling back to teams-decrypted.db.
 - UI spec: teams-record repo design/viewer-ui-design.md (commit 6e2f93e) + assets/04 bubble layout.
 """
-import base64, json, os, re, sqlite3, subprocess, sys, threading
+import base64, json, os, re, shutil, sqlite3, subprocess, sys, tarfile, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+from urllib.request import Request, urlopen
 
 # Prefer cumulative archive (retains messages aged out of live DB); fall back to
 # the single-shot decrypted snapshot.
@@ -18,8 +19,111 @@ PORT = 8799
 MY_ID = '754107854600802305'
 REFRESH_BAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'refresh_archive.bat')
 _REFRESH_LOCK = threading.Lock()
+_UPDATE_LOCK = threading.Lock()
 CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000) if os.name == 'nt' else 0
 THUMBS_DIR = os.path.join(_ROOT, 'thumbs')
+RELEASES_URL = 'https://github.com/lisyoen/teams-record/releases'
+REMOTE_VERSION_URL = 'https://raw.githubusercontent.com/lisyoen/teams-record/main/VERSION'
+TARBALL_URL = 'https://codeload.github.com/lisyoen/teams-record/tar.gz/refs/heads/main'
+_REMOTE_VERSION_CACHE = {'at': 0.0, 'value': None}
+_PROTECTED_UPDATE_NAMES = {
+    'dbkey.secret', 'teams-archive.db', 'teams-decrypted.db', 'thumbs',
+    'viewer.log', '__pycache__', 'update.log', 'VERSION',
+}
+
+
+def load_local_version(server_file=__file__):
+    """Load VERSION beside server.py first, then from the repository root."""
+    here = os.path.dirname(os.path.abspath(server_file))
+    for path in (os.path.join(here, 'VERSION'), os.path.join(os.path.dirname(here), 'VERSION')):
+        try:
+            with open(path, encoding='utf-8') as f:
+                value = f.read().strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    return '0.0.0'
+
+
+LOCAL_VERSION = load_local_version()
+
+
+def _version_tuple(value):
+    parts = str(value or '').strip().split('.')
+    return tuple(int(part) if part.isdigit() else 0 for part in (parts + ['0', '0', '0'])[:3])
+
+
+def ver_gt(a, b):
+    return _version_tuple(a) > _version_tuple(b)
+
+
+def fetch_remote_version():
+    now = time.monotonic()
+    if now - _REMOTE_VERSION_CACHE['at'] < 60:
+        return _REMOTE_VERSION_CACHE['value']
+    value = None
+    try:
+        request = Request(REMOTE_VERSION_URL, headers={'User-Agent': 'teams-record-viewer/1.0'})
+        with urlopen(request, timeout=4) as response:
+            candidate = response.read(128).decode('utf-8').strip()
+        if candidate:
+            value = candidate
+    except Exception:
+        pass
+    _REMOTE_VERSION_CACHE.update(at=now, value=value)
+    return value
+
+
+def tar_member_is_safe(member):
+    """Allow only ordinary relative files/directories without parent traversal."""
+    name = member.name if hasattr(member, 'name') else str(member)
+    normalized = name.replace('\\', '/')
+    if normalized.startswith('/') or re.match(r'^[A-Za-z]:', normalized):
+        return False
+    if '..' in normalized.split('/'):
+        return False
+    return not hasattr(member, 'isfile') or member.isfile() or member.isdir()
+
+
+def _copy_viewer_sources(source, destination):
+    for root, dirs, files in os.walk(source):
+        rel_root = os.path.relpath(root, source)
+        dirs[:] = [d for d in dirs if d not in _PROTECTED_UPDATE_NAMES]
+        target_root = destination if rel_root == '.' else os.path.join(destination, rel_root)
+        os.makedirs(target_root, exist_ok=True)
+        for filename in files:
+            if filename in _PROTECTED_UPDATE_NAMES:
+                continue
+            shutil.copy2(os.path.join(root, filename), os.path.join(target_root, filename))
+
+
+def install_latest_viewer():
+    viewer_dir = os.path.dirname(os.path.abspath(__file__))
+    with tempfile.TemporaryDirectory(prefix='teams-record-update-') as temp_dir:
+        archive_path = os.path.join(temp_dir, 'update.tgz')
+        request = Request(TARBALL_URL, headers={'User-Agent': 'teams-record-viewer/1.0'})
+        with urlopen(request, timeout=30) as response, open(archive_path, 'wb') as output:
+            shutil.copyfileobj(response, output)
+        extract_dir = os.path.join(temp_dir, 'extract')
+        os.makedirs(extract_dir)
+        with tarfile.open(archive_path, 'r:gz') as archive:
+            members = archive.getmembers()
+            if any(not tar_member_is_safe(member) for member in members):
+                raise ValueError('unsafe tarball member')
+            archive.extractall(extract_dir, members=members)
+        source_root = os.path.join(extract_dir, 'teams-record-main')
+        source_viewer = os.path.join(source_root, 'viewer')
+        if not os.path.isdir(source_viewer):
+            raise ValueError('viewer source missing from tarball')
+        with open(os.path.join(source_root, 'VERSION'), encoding='utf-8') as f:
+            new_version = f.read().strip()
+        if not new_version:
+            raise ValueError('VERSION missing from tarball')
+        _copy_viewer_sources(source_viewer, viewer_dir)
+        with open(os.path.join(viewer_dir, 'VERSION'), 'w', encoding='utf-8', newline='\n') as f:
+            f.write(new_version + '\n')
+        return new_version
 CMD_RE = re.compile(r'^\s*<!--.*?-->\s*', re.S)
 FAVICON_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
@@ -496,10 +600,15 @@ PAGE = '''<!doctype html>
 body{margin:0;font-family:'Malgun Gothic','Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;color:#222}
 header{display:flex;align-items:center;gap:20px;padding:6px 16px;border-bottom:1px solid #ddd;background:#fff}
 header h1{font-size:15px;margin:0;color:#334}
-.refbtn{margin-left:auto;border:1px solid #cdd6e4;background:#f2f6fc;color:#1a73e8;border-radius:6px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
+.refbtn{border:1px solid #cdd6e4;background:#f2f6fc;color:#1a73e8;border-radius:6px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
 .refbtn:hover{background:#e6eefb}
 .refbtn:disabled{opacity:.55;cursor:default}
 .rstat{font-size:12px;color:#889;white-space:nowrap}
+.versionbar{margin-left:auto;display:flex;align-items:center;gap:7px;white-space:nowrap}
+#verbadge{font-size:12px;color:#68758a;text-decoration:none;border:1px solid #d9e0e9;border-radius:10px;padding:2px 7px;cursor:pointer}
+#updbtn{border:1px solid #5b5fc7;background:#5b5fc7;color:#fff;border-radius:6px;padding:5px 9px;font-size:12px;cursor:pointer}
+#updbtn[hidden]{display:none}
+#updstat{font-size:12px;color:#327a47}
 nav button{border:0;background:none;padding:9px 12px;font-size:14px;cursor:pointer;color:#888;border-bottom:2px solid transparent}
 nav button.on{color:#1a73e8;border-bottom-color:#1a73e8;font-weight:bold}
 .searchbar{display:flex;align-items:center;gap:4px;margin-left:4px}
@@ -581,7 +690,7 @@ main{flex:1;display:flex;min-height:0}
 .empty{color:#99a;text-align:center;margin-top:40px;font-size:13px}
 </style></head><body>
 <header><h1>Teams Record Viewer</h1>
-<nav><button id="tabKt" class="on">워크스페이스-채널</button><button id="tabKm">1:1 대화</button></nav><div class="searchbar"><input id="searchQ" placeholder="대화 검색" autocomplete="off"><button id="btnSearch" title="검색">⌕</button></div><span id="rstat" class="rstat"></span><button id="btnRefresh" class="refbtn" title="라이브 DB를 스냅샷·복호화해 누적 아카이브에 최신 내용을 append합니다">↻ 새로고침</button>
+<nav><button id="tabKt" class="on">워크스페이스-채널</button><button id="tabKm">1:1 대화</button></nav><div class="searchbar"><input id="searchQ" placeholder="대화 검색" autocomplete="off"><button id="btnSearch" title="검색">⌕</button></div><span id="rstat" class="rstat"></span><button id="btnRefresh" class="refbtn" title="라이브 DB를 스냅샷·복호화해 누적 아카이브에 최신 내용을 append합니다">↻ 새로고침</button><div class="versionbar"><span id="updstat"></span><a id="verbadge">v__LOCAL_VERSION__</a><button id="updbtn" hidden>업데이트</button></div>
 </header>
 <main><aside id="list"></aside>
 <section id="msgs"><div id="msgHead"><span id="msgTitle"></span><button id="btnDlMd" class="refbtn" title="현재 대화를 Markdown 으로 저장" hidden>⬇ 다운로드</button></div><div id="msgBody"><div class="empty">좌측에서 채널 또는 대화를 선택하세요</div></div></section>
@@ -953,6 +1062,27 @@ async function doRefresh(){
   btn.disabled=false;
   setTimeout(()=>{if(!btn.disabled)st.textContent='';},8000);
 }
+async function loadVersion(){
+  try{
+    const j=await (await fetch('/api/version')).json();
+    $('#verbadge').textContent='v'+j.local;
+    $('#verbadge').onclick=()=>window.open(j.releases,'_blank');
+    if(j.update){$('#updbtn').textContent='업데이트 (v'+j.latest+')';$('#updbtn').hidden=false;}
+  }catch(e){}
+}
+async function doUpdate(){
+  if(!confirm('최신 버전으로 업데이트할까요? 업데이트 후 뷰어를 재시작해야 합니다.'))return;
+  const btn=$('#updbtn'),st=$('#updstat');
+  btn.disabled=true;st.textContent='업데이트 중…';
+  try{
+    const j=await (await fetch('/api/update',{method:'POST'})).json();
+    if(j.ok){
+      const msg='업데이트 완료 — 뷰어를 재시작하세요';
+      st.textContent=msg;btn.hidden=true;alert(msg);
+    }else{st.textContent='업데이트 실패: '+(j.error||'unknown');alert(st.textContent);}
+  }catch(e){st.textContent='업데이트 오류: '+e;alert(st.textContent);}
+  btn.disabled=false;
+}
 function openLightbox(src){const lb=$('#lightbox'),im=$('#lbimg');im.src=src;lb.hidden=false;document.body.style.overflow='hidden';}
 function closeLightbox(){const lb=$('#lightbox');lb.hidden=true;$('#lbimg').src='';document.body.style.overflow='';}
 $('#lightbox').onclick=e=>{if(e.target.id!=='lbimg')closeLightbox();};
@@ -962,8 +1092,11 @@ $('#btnSearch').onclick=doSearch;
 $('#searchQ').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
 $('#searchQ').addEventListener('input',e=>{if(!e.target.value.trim()&&SEARCH){SEARCH=null;if(CURTAB==='kt')renderKt();else renderKm();}});
 $('#btnRefresh').onclick=doRefresh;
-(async()=>{B=await (await fetch('/api/bootstrap')).json();MY=B.my;renderKt();})();
+$('#updbtn').onclick=doUpdate;
+(async()=>{loadVersion();B=await (await fetch('/api/bootstrap')).json();MY=B.my;renderKt();})();
 </script></body></html>'''
+
+PAGE = PAGE.replace('__LOCAL_VERSION__', LOCAL_VERSION)
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -1001,12 +1134,37 @@ class H(BaseHTTPRequestHandler):
             self._send_favicon(base64.b64decode(FAVICON_ICO_B64), 'image/x-icon', include_body=False)
         elif u.path == '/favicon.svg':
             self._send_favicon(FAVICON_SVG.encode('utf-8'), 'image/svg+xml', include_body=False)
+        elif u.path == '/api/version':
+            latest = fetch_remote_version()
+            body = json.dumps({'local': LOCAL_VERSION, 'latest': latest,
+                               'update': bool(latest and ver_gt(latest, LOCAL_VERSION)),
+                               'releases': RELEASES_URL}).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.end_headers()
         else:
             self.send_error(404)
 
     def do_POST(self):
         u = urlparse(self.path)
-        if u.path == '/api/refresh':
+        if u.path == '/api/update':
+            if not _UPDATE_LOCK.acquire(blocking=False):
+                self._send(json.dumps({'ok': False, 'error': 'already'}).encode('utf-8'),
+                           'application/json; charset=utf-8')
+                return
+            try:
+                new_version = install_latest_viewer()
+                result = {'ok': True, 'version': new_version, 'restart_required': True}
+            except Exception as e:
+                result = {'ok': False, 'error': str(e)[:400]}
+            finally:
+                _UPDATE_LOCK.release()
+            self._send(json.dumps(result, ensure_ascii=False).encode('utf-8'),
+                       'application/json; charset=utf-8')
+        elif u.path == '/api/refresh':
             if not _REFRESH_LOCK.acquire(blocking=False):
                 self._send(json.dumps({'ok': False, 'error': '\uc774\ubbf8 \uac31\uc2e0 \uc911\uc785\ub2c8\ub2e4'}).encode('utf-8'),
                            'application/json; charset=utf-8')
@@ -1049,6 +1207,12 @@ class H(BaseHTTPRequestHandler):
             u = urlparse(self.path)
             if u.path == '/':
                 self._send(PAGE.encode('utf-8'), 'text/html; charset=utf-8')
+            elif u.path == '/api/version':
+                latest = fetch_remote_version()
+                self._send(json.dumps({'local': LOCAL_VERSION, 'latest': latest,
+                                       'update': bool(latest and ver_gt(latest, LOCAL_VERSION)),
+                                       'releases': RELEASES_URL}).encode('utf-8'),
+                           'application/json; charset=utf-8')
             elif u.path == '/api/bootstrap':
                 self._send(json.dumps(api_bootstrap(), ensure_ascii=False).encode('utf-8'),
                            'application/json; charset=utf-8')

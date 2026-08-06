@@ -8,4 +8,5 @@ if errorlevel 1 (
   pause
   exit /b %errorlevel%
 )
+call "%~dp0update-check.bat"
 call "%~dp0..\electron\teams-viewer-electron.bat"
