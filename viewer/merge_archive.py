@@ -19,11 +19,55 @@ Merge policy:
 import sqlite3, sys, datetime
 
 
+def quote_identifier(value):
+    return '"%s"' % str(value).replace('"', '""')
+
+
 def table_info(con, tbl):
-    cols = con.execute("PRAGMA table_info(%s)" % tbl).fetchall()
+    cols = con.execute("PRAGMA table_info(%s)" % quote_identifier(tbl)).fetchall()
     names = [c[1] for c in cols]
     pk = [c[1] for c in cols if c[5]]  # c[5] = pk order (>0 if part of PK)
     return names, pk
+
+
+def sync_archive_columns(src, arc, tbl):
+    """Add columns introduced by a newer Knox Teams DB schema.
+
+    CREATE TABLE IF NOT EXISTS does not update an existing archive table.  The
+    desktop client can add nullable/defaulted columns during an app update, so
+    mirror those additions before inserting rows into the cumulative archive.
+    """
+    src_cols = src.execute(
+        "PRAGMA table_info(%s)" % quote_identifier(tbl)
+    ).fetchall()
+    arc_names = {
+        c[1]
+        for c in arc.execute(
+            "PRAGMA table_info(%s)" % quote_identifier(tbl)
+        ).fetchall()
+    }
+    added = []
+    for col in src_cols:
+        _, name, declared_type, not_null, default_value, pk_order = col
+        if name in arc_names:
+            continue
+        if pk_order:
+            raise RuntimeError(
+                "cannot add new primary-key column %s.%s in place" % (tbl, name)
+            )
+        definition = quote_identifier(name)
+        if declared_type:
+            definition += " " + declared_type
+        if not_null and default_value is not None:
+            definition += " NOT NULL DEFAULT " + default_value
+        elif default_value is not None:
+            definition += " DEFAULT " + default_value
+        arc.execute(
+            "ALTER TABLE %s ADD COLUMN %s" % (quote_identifier(tbl), definition)
+        )
+        arc_names.add(name)
+        added.append(name)
+    return added
 
 
 def main():
@@ -41,6 +85,7 @@ def main():
         "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
 
     summary = []
+    schema_changes = []
     for tbl in tables:
         create_sql = src.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
@@ -49,6 +94,9 @@ def main():
             continue
         # ensure table exists in archive (identical schema)
         arc.execute(create_sql[0].replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1))
+        added = sync_archive_columns(src, arc, tbl)
+        if added:
+            schema_changes.append((tbl, added))
 
         names, pk = table_info(src, tbl)
         collist = ",".join('"%s"' % n for n in names)
@@ -87,6 +135,8 @@ def main():
         if ("TB_KmMessage",) in [(t,) for t in tables] else 0
     changed = [s for s in summary if s[3] != 0]
     print("MERGE_OK tables=%d changed=%d" % (len(summary), len(changed)))
+    for t, columns in schema_changes:
+        print("  SCHEMA_ADD %-18s %s" % (t, ",".join(columns)))
     for t, b, a, d in changed:
         print("  +%-6d %-18s %d -> %d" % (d, t, b, a))
     print("ARCHIVE_TOTAL TB_KtMessage=%d TB_KmMessage=%d last_merge=%s" % (kt, km, now))
