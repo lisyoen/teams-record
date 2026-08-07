@@ -1,6 +1,6 @@
 [Unit]
 Description=Pull Teams archive for %i through the authenticated reverse tunnel
-After=network-online.target reverse-tunnel.service
+After=network-online.target rtunnel.service
 Wants=network-online.target
 
 [Service]
@@ -14,4 +14,3 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/lisyoen/.local/share/teams-record-remote /home/lisyoen/.local/state/teams-record-remote
-
