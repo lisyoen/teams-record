@@ -22,14 +22,22 @@ if (-not (Test-Path -LiteralPath $SecretPath -PathType Leaf)) {
     throw "upload token file not found: $SecretPath"
 }
 
-# Keep the token readable only by the current Windows account and SYSTEM.
+# Keep the token readable only by the profile account and SYSTEM.  The
+# installer may be invoked through a background management service whose
+# $env:USERNAME is SYSTEM, so derive the intended account from the explicit
+# profile path instead of the caller environment.
+$profileUser = Split-Path -Leaf $UserProfilePath.TrimEnd('\')
+if ([string]::IsNullOrWhiteSpace($profileUser)) {
+    throw "could not derive Windows account from UserProfilePath: $UserProfilePath"
+}
+$profileAccount = "$env:COMPUTERNAME\$profileUser"
 $acl = New-Object System.Security.AccessControl.FileSecurity
 $acl.SetAccessRuleProtection($true, $false)
-$acl.SetOwner([System.Security.Principal.NTAccount]$env:USERNAME)
+$acl.SetOwner([System.Security.Principal.NTAccount]$profileAccount)
 $inheritance = [System.Security.AccessControl.InheritanceFlags]::None
 $propagation = [System.Security.AccessControl.PropagationFlags]::None
 $allow = [System.Security.AccessControl.AccessControlType]::Allow
-$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME, 'Read', $inheritance, $propagation, $allow)))
+$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($profileAccount, 'Read', $inheritance, $propagation, $allow)))
 $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('SYSTEM', 'FullControl', $inheritance, $propagation, $allow)))
 Set-Acl -LiteralPath $SecretPath -AclObject $acl
 
