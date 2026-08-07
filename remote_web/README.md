@@ -61,6 +61,8 @@ curl -fsS https://teams-record.craftbay.io/healthz
 
 `sync_windows.ps1`은 기존 `viewer\update-db.bat`를 숨김 실행한 뒤 누적 `teams-archive.db`만 HTTPS 업로드합니다. 평문 업로드 토큰은 Git 밖의 `%LOCALAPPDATA%\teams-record\remote-upload.token`에 한 줄로 저장합니다.
 
+리버스터널이나 서비스 실행 계정이 잘못된 `APPDATA` 값을 상속하는 경우를 막기 위해 스크립트는 `UserProfilePath` 기준으로 `USERPROFILE`·`APPDATA`·`LOCALAPPDATA`를 명시적으로 설정한 뒤 복호화 갱신을 실행합니다.
+
 도메인과 서버 업로드 검증이 끝난 뒤에만 회사 PC에서 다음 순서로 설치합니다.
 
 1. `remote-upload.token`을 만들고 현재 Windows 사용자와 SYSTEM만 읽도록 ACL을 제한합니다.

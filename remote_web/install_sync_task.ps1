@@ -3,13 +3,17 @@ param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9_.-]{1,64}$')][string]$Username,
     [string]$InstallRoot = 'D:\git\teams-record',
     [string]$ServerUrl = 'https://teams-record.craftbay.io',
-    [string]$SecretPath = "$env:LOCALAPPDATA\teams-record\remote-upload.token",
+    [string]$UserProfilePath = $env:USERPROFILE,
+    [string]$SecretPath = '',
     [string]$TaskName = 'TeamsRecordRemoteSync',
     [int]$Minutes = 10
 )
 
 $ErrorActionPreference = 'Stop'
 if ($Minutes -lt 5) { throw 'Minutes must be at least 5' }
+if ([string]::IsNullOrWhiteSpace($SecretPath)) {
+    $SecretPath = Join-Path $UserProfilePath 'AppData\Local\teams-record\remote-upload.token'
+}
 $script = Join-Path $InstallRoot 'remote_web\sync_windows.ps1'
 if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
     throw "sync script not found: $script"
@@ -33,7 +37,8 @@ $quotedScript = '"' + $script + '"'
 $quotedRoot = '"' + $InstallRoot + '"'
 $quotedUrl = '"' + $ServerUrl + '"'
 $quotedSecret = '"' + $SecretPath + '"'
-$taskArgs = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $quotedScript -Username $Username -InstallRoot $quotedRoot -ServerUrl $quotedUrl -SecretPath $quotedSecret"
+$quotedProfile = '"' + $UserProfilePath + '"'
+$taskArgs = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $quotedScript -Username $Username -InstallRoot $quotedRoot -ServerUrl $quotedUrl -UserProfilePath $quotedProfile -SecretPath $quotedSecret"
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArgs
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes $Minutes) `

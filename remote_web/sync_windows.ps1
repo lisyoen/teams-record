@@ -3,11 +3,18 @@ param(
     [string]$InstallRoot = 'D:\git\teams-record',
     [string]$ServerUrl = 'https://teams-record.craftbay.io',
     [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9_.-]{1,64}$')][string]$Username,
-    [string]$SecretPath = "$env:LOCALAPPDATA\teams-record\remote-upload.token",
+    [string]$UserProfilePath = $env:USERPROFILE,
+    [string]$SecretPath = '',
     [string]$ProxyUrl = $env:HTTPS_PROXY
 )
 
 $ErrorActionPreference = 'Stop'
+$env:USERPROFILE = $UserProfilePath
+$env:APPDATA = Join-Path $UserProfilePath 'AppData\Roaming'
+$env:LOCALAPPDATA = Join-Path $UserProfilePath 'AppData\Local'
+if ([string]::IsNullOrWhiteSpace($SecretPath)) {
+    $SecretPath = Join-Path $env:LOCALAPPDATA 'teams-record\remote-upload.token'
+}
 $refresh = Join-Path $InstallRoot 'viewer\update-db.bat'
 $database = Join-Path $InstallRoot 'teams-archive.db'
 
@@ -64,4 +71,3 @@ finally {
     $token = $null
     $headers.Authorization = $null
 }
-
