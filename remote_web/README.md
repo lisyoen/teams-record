@@ -63,6 +63,8 @@ curl -fsS https://teams-record.craftbay.io/healthz
 
 리버스터널이나 서비스 실행 계정이 잘못된 `APPDATA` 값을 상속하는 경우를 막기 위해 스크립트는 `UserProfilePath` 기준으로 `USERPROFILE`·`APPDATA`·`LOCALAPPDATA`를 명시적으로 설정한 뒤 복호화 갱신을 실행합니다.
 
+회사 프록시가 외부 HTTPS `POST`를 차단하는 환경에서는 Windows 업로드 태스크를 설치하지 않습니다. 대신 `systemd/teams-record-pull@.*`가 spark-home에서 기존 인증 리버스터널을 통해 DB를 청크 단위로 가져와 사용자별 데이터 디렉터리에 원자적으로 게시합니다. 사용자마다 별도 환경 파일과 systemd 인스턴스를 사용하므로 나중에 계정을 추가해도 DB가 섞이지 않습니다.
+
 도메인과 서버 업로드 검증이 끝난 뒤에만 회사 PC에서 다음 순서로 설치합니다.
 
 1. `remote-upload.token`을 만들고 현재 Windows 사용자와 SYSTEM만 읽도록 ACL을 제한합니다.

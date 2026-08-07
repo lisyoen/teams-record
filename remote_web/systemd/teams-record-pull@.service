@@ -1,0 +1,17 @@
+[Unit]
+Description=Pull Teams archive for %i through the authenticated reverse tunnel
+After=network-online.target reverse-tunnel.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=lisyoen
+Group=lisyoen
+EnvironmentFile=/home/lisyoen/.config/teams-record-remote/pull-%i.env
+ExecStart=/usr/bin/python3 /home/lisyoen/.openclaw/workspace/scripts/sync-teams-db-to-spark-home.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/lisyoen/.local/share/teams-record-remote /home/lisyoen/.local/state/teams-record-remote
+
