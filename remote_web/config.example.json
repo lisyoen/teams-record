@@ -1,0 +1,17 @@
+{
+  "host": "127.0.0.1",
+  "port": 9240,
+  "secureCookie": true,
+  "maxUploadBytes": 268435456,
+  "stateDir": "/home/lisyoen/.local/state/teams-record-remote",
+  "dataRoot": "/home/lisyoen/.local/share/teams-record-remote/users",
+  "users": [
+    {
+      "username": "example-user",
+      "passwordHash": "pbkdf2_sha256$600000$REPLACE_SALT$REPLACE_DIGEST",
+      "uploadTokenHash": "sha256$REPLACE_WITH_SHA256_HEX",
+      "myId": ""
+    }
+  ]
+}
+
