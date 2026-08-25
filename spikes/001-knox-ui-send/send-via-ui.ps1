@@ -12,6 +12,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+throw 'DISABLED: visible composer focus and target channel identity are not verified safely. Do not use this spike for message sending.'
+
 function Receive-CdpResponse {
     param(
         [System.Net.WebSockets.ClientWebSocket]$Socket,
