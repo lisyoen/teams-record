@@ -26,6 +26,29 @@ def test_thread_messages_places_sorted_replies_below_parent():
     assert [message["_thread_depth"] for message in threaded] == [0, 1, 1, 0]
 
 
+def test_late_reply_does_not_move_root_after_newer_root():
+    messages = [
+        {"mid": "reply-a1", "parent": "root-a", "t": 300},
+        {"mid": "root-b", "parent": None, "t": 200},
+        {"mid": "root-a", "parent": None, "t": 100},
+    ]
+
+    assert mids(MODULE.thread_messages(messages)) == ["root-a", "reply-a1", "root-b"]
+
+
+def test_orphan_reply_uses_own_sent_time_among_roots():
+    messages = [
+        {"mid": "root-b", "parent": None, "t": 200},
+        {"mid": "orphan", "parent": "outside-window", "t": 150},
+        {"mid": "root-a", "parent": None, "t": 100},
+    ]
+
+    threaded = MODULE.thread_messages(messages)
+
+    assert mids(threaded) == ["root-a", "orphan", "root-b"]
+    assert threaded[1]["_reply_orphan"] is True
+
+
 def test_thread_messages_keeps_missing_parent_reply_as_marked_root():
     messages = [
         {"mid": "orphan", "parent": "outside-window", "t": 10},

@@ -392,7 +392,7 @@ def parse_reply_parent(content):
 
 
 def thread_messages(messages):
-    """Group replies below their top-level parent without changing root order."""
+    """Group replies below parents, ordered by each root's own sent time."""
     by_mid = {str(m.get('mid')): m for m in messages if m.get('mid') is not None}
     children = {}
     roots = []
@@ -422,7 +422,7 @@ def thread_messages(messages):
             children.setdefault(root_id, []).append(message)
 
     output = []
-    for root in roots:
+    for root in sorted(roots, key=lambda m: (m.get('t') or 0, str(m.get('mid') or ''))):
         item = dict(root)
         item['_thread_depth'] = 0
         item['_reply_orphan'] = bool(item.get('parent'))
@@ -729,8 +729,8 @@ def api_messages(kind, cid):
                  'DeleteRequesterId,ReactionInfo,FileName FROM TB_KmMessage '
                  'WHERE ChatroomId=? ORDER BY SentTime', (cid,))
         ends, others = load_room_horizons(cid)
-        return [norm(r, kind, ends, others) for r in rows]
-    return [norm(r, kind) for r in rows]
+        return thread_messages([norm(r, kind, ends, others) for r in rows])
+    return thread_messages([norm(r, kind) for r in rows])
 
 def read_thumb(fid):
     """Return (bytes, content_type) for a locally-cached thumbnail, or (None, None)."""
@@ -1070,50 +1070,21 @@ function bubbleWrap(m,next,mine){
   }
   return out;
 }
-function threadMessages(messages){
-  const byMid=new Map();
-  for(const m of messages){if(m.mid!==null&&m.mid!==undefined)byMid.set(String(m.mid),m);}
-  const children=new Map(),roots=[];
-  function topParent(m){
-    if(m.parent===null||m.parent===undefined||!byMid.has(String(m.parent)))return null;
-    const seen=new Set([String(m.mid)]);
-    let cur=byMid.get(String(m.parent));
-    while(cur.parent!==null&&cur.parent!==undefined&&byMid.has(String(cur.parent))){
-      const id=String(cur.mid);
-      if(seen.has(id))return null;
-      seen.add(id);cur=byMid.get(String(cur.parent));
-    }
-    return String(cur.mid);
-  }
-  for(const m of messages){
-    const rootId=topParent(m);
-    if(rootId===null){roots.push(Object.assign({},m,{threadDepth:0,replyOrphan:m.parent!==null&&m.parent!==undefined}));}
-    else{if(!children.has(rootId))children.set(rootId,[]);children.get(rootId).push(m);}
-  }
-  const out=[];
-  for(const root of roots){
-    out.push(root);
-    const replies=children.get(String(root.mid))||[];
-    replies.sort((a,b)=>(a.t||0)-(b.t||0));
-    for(const reply of replies)out.push(Object.assign({},reply,{threadDepth:1,replyOrphan:false}));
-  }
-  return out;
-}
 function renderMsgs(ms){
   const box=$('#msgBody');box.innerHTML='';
   if(!ms.length){box.appendChild(divT('empty','메시지 없음'));return;}
-  const ordered=threadMessages(ms);
+  const ordered=ms;
   let prevDate='',prevSender=null,prevDepth=-1;
   for(let i=0;i<ordered.length;i++){
     const m=ordered[i];
     const d=m.t?fmtD(m.t):'';
-    if(m.threadDepth===0&&d&&d!==prevDate){box.appendChild(divT('dsep',d));prevDate=d;prevSender=null;prevDepth=-1;}
+    if(m._thread_depth===0&&d&&d!==prevDate){box.appendChild(divT('dsep',d));prevDate=d;prevSender=null;prevDepth=-1;}
     if(m.sys){box.appendChild(divT('sysline',m.sys));prevSender=null;continue;}
     const mine=m.s===MY;
-    const row=div('mrow'+(mine?' mine':'')+(m.threadDepth?' reply':'')+(m.replyOrphan?' orphan':''));
+    const row=div('mrow'+(mine?' mine':'')+(m._thread_depth?' reply':'')+(m._reply_orphan?' orphan':''));
     row.dataset.mid=m.mid;
     if(!mine){
-      const showHead=m.s!==prevSender||m.threadDepth!==prevDepth;
+      const showHead=m.s!==prevSender||m._thread_depth!==prevDepth;
       const av=div('av'+(showHead?'':' ghost'));
       av.textContent=showHead?(nm(m.s)||'?').slice(0,1):'';
       row.appendChild(av);
@@ -1126,7 +1097,7 @@ function renderMsgs(ms){
     }
     box.appendChild(row);
     prevSender=m.s;
-    prevDepth=m.threadDepth;
+    prevDepth=m._thread_depth;
   }
   box.scrollTop=box.scrollHeight;
 }
