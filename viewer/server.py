@@ -346,6 +346,14 @@ def clean(txt):
             vals.append(CMD_RE.sub('', v).strip())
 
     if isinstance(data, dict):
+        # KM replies wrap the current message and quoted parent in ncustomdata.
+        # Render only the current message here; the parent id is normalized by
+        # parse_reply_parent() for thread placement.
+        if data.get('ncustomtype') == 'reply':
+            current = data.get('ncustomdata') or {}
+            message = current.get('message') if isinstance(current, dict) else None
+            if isinstance(message, dict):
+                add(message.get('chatMsg'))
         for k in ('text', 'message', 'plainText'):
             add(data.get(k))
         body = data.get('body')
@@ -366,6 +374,67 @@ def clean(txt):
             else:
                 add(e)
     return '\n'.join(vals).strip()
+
+
+def parse_reply_parent(content):
+    """Return the quoted parent MessageId from a KM reply Content JSON."""
+    raw = CMD_RE.sub('', content or '').strip()
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict) or data.get('ncustomtype') != 'reply':
+            return None
+        entries = (data.get('ncustomdataList') or {}).get('ncustomdata') or []
+        message = entries[0].get('message') if entries and isinstance(entries[0], dict) else None
+        parent = message.get('msgId') if isinstance(message, dict) else None
+        return str(parent) if parent not in (None, '', 0, '0') else None
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def thread_messages(messages):
+    """Group replies below their top-level parent without changing root order."""
+    by_mid = {str(m.get('mid')): m for m in messages if m.get('mid') is not None}
+    children = {}
+    roots = []
+    root_ids = set()
+
+    def top_parent(message):
+        parent = message.get('parent')
+        if parent is None or str(parent) not in by_mid:
+            return None
+        seen = {str(message.get('mid'))}
+        current = by_mid[str(parent)]
+        while current.get('parent') is not None and str(current.get('parent')) in by_mid:
+            current_id = str(current.get('mid'))
+            if current_id in seen:
+                return None
+            seen.add(current_id)
+            current = by_mid[str(current.get('parent'))]
+        return str(current.get('mid'))
+
+    for message in messages:
+        root_id = top_parent(message)
+        if root_id is None:
+            roots.append(message)
+            if message.get('mid') is not None:
+                root_ids.add(str(message.get('mid')))
+        else:
+            children.setdefault(root_id, []).append(message)
+
+    output = []
+    for root in roots:
+        item = dict(root)
+        item['_thread_depth'] = 0
+        item['_reply_orphan'] = bool(item.get('parent'))
+        output.append(item)
+        root_id = str(root.get('mid')) if root.get('mid') is not None else None
+        replies = children.get(root_id, []) if root_id in root_ids else []
+        for reply in sorted(replies, key=lambda m: m.get('t') or 0):
+            child = dict(reply)
+            child['_thread_depth'] = 1
+            child['_reply_orphan'] = False
+            output.append(child)
+    return output
 
 def parse_reactions(ri):
     out = []
@@ -547,7 +616,11 @@ def load_room_horizons(cid):
     return ends, others
 
 def norm(r, kind, ends=None, others=None):
-    m = {'id': r.get('MessageId'), 't': r.get('SentTime'), 's': str(r.get('Sender') or ''),
+    mid = r.get('MessageId')
+    parent = r.get('ParentMsgId') if kind == 'kt' else parse_reply_parent(r.get('Content'))
+    m = {'id': mid, 'mid': mid, 'parent': str(parent) if parent not in (None, '') else None,
+         'reply_count': r.get('ReplyTotalCount') if kind == 'kt' else None,
+         't': r.get('SentTime'), 's': str(r.get('Sender') or ''),
          'txt': clean(r.get('Content')), 're': parse_reactions(r.get('ReactionInfo')),
          'sys': None, 'label': None, 'media': None}
     # read receipts: for my own messages in 1:1/group rooms, count participants
@@ -649,7 +722,8 @@ def api_search(term):
 def api_messages(kind, cid):
     if kind == 'kt':
         rows = q('SELECT MessageId,Content,MessageType,SentTime,Sender,Recalled,Deleted,'
-                 'ReactionInfo FROM TB_KtMessage WHERE ChannelID=? ORDER BY SentTime', (cid,))
+                 'ReactionInfo,ParentMsgId,ReplyTotalCount FROM TB_KtMessage '
+                 'WHERE ChannelID=? ORDER BY SentTime', (cid,))
     else:
         rows = q('SELECT MessageId,Content,MessageType,SentTime,Sender,Recalled,'
                  'DeleteRequesterId,ReactionInfo,FileName FROM TB_KmMessage '
@@ -740,6 +814,8 @@ main{flex:1;display:flex;min-height:0}
 .sysline{text-align:center;color:#98a2ad;font-size:12px;margin:8px 0}
 .mrow{display:flex;margin:2px 0;align-items:flex-start}
 .mrow.mine{justify-content:flex-end}
+.mrow.reply{margin-left:36px;padding-left:12px;border-left:2px solid #d4dae3}
+.mrow.reply.orphan::before{content:'\\21B3';color:#9aa5b0;font-size:12px;margin:8px 6px 0 0}
 .av{width:34px;height:34px;border-radius:50%;background:#8fa6bd;color:#fff;display:flex;align-items:center;justify-content:center;flex:none;margin-right:8px;font-size:13px}
 .av.ghost{background:transparent;color:transparent}
 .mcol{max-width:70%;display:flex;flex-direction:column}
@@ -751,6 +827,7 @@ main{flex:1;display:flex;min-height:0}
 .rdbadge.allread{color:#3a8a4a}
 .bmeta{display:flex;flex-direction:column;align-items:flex-end;justify-content:flex-end;gap:1px}
 .bwrap{display:flex;align-items:flex-end;gap:6px;max-width:100%}
+.replymeta{font-size:11px;color:#8b96a5;margin:3px 4px 0}
 .bubble{background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:8px 12px;font-size:14px;white-space:pre-wrap;word-break:break-word;max-width:520px;line-height:1.45}
 .bubble.me{background:#d3e9ff;border-color:#bcd8f5}
 .mrow.hit .bubble,.mrow.hit .mediacard,.mrow.hit .imgcard .thumb,.mrow.hit .imgcard .thumbimg{box-shadow:0 0 0 3px #ffe28a;background:#fff7d0}
@@ -974,6 +1051,7 @@ function bubbleWrap(m,next,mine){
   meta.appendChild(t);
   if(mine){wrap.appendChild(meta);wrap.appendChild(contentEl);}else{wrap.appendChild(contentEl);wrap.appendChild(t);}
   out.appendChild(wrap);
+  if(m.reply_count>0){out.appendChild(divT('replymeta','\u21B3 \uB2F5\uAE00 '+m.reply_count));}
   if(m.re&&m.re.length){
     const rc=div('reacts'+(mine?' r':''));
     for(const r of m.re){
@@ -992,32 +1070,63 @@ function bubbleWrap(m,next,mine){
   }
   return out;
 }
+function threadMessages(messages){
+  const byMid=new Map();
+  for(const m of messages){if(m.mid!==null&&m.mid!==undefined)byMid.set(String(m.mid),m);}
+  const children=new Map(),roots=[];
+  function topParent(m){
+    if(m.parent===null||m.parent===undefined||!byMid.has(String(m.parent)))return null;
+    const seen=new Set([String(m.mid)]);
+    let cur=byMid.get(String(m.parent));
+    while(cur.parent!==null&&cur.parent!==undefined&&byMid.has(String(cur.parent))){
+      const id=String(cur.mid);
+      if(seen.has(id))return null;
+      seen.add(id);cur=byMid.get(String(cur.parent));
+    }
+    return String(cur.mid);
+  }
+  for(const m of messages){
+    const rootId=topParent(m);
+    if(rootId===null){roots.push(Object.assign({},m,{threadDepth:0,replyOrphan:m.parent!==null&&m.parent!==undefined}));}
+    else{if(!children.has(rootId))children.set(rootId,[]);children.get(rootId).push(m);}
+  }
+  const out=[];
+  for(const root of roots){
+    out.push(root);
+    const replies=children.get(String(root.mid))||[];
+    replies.sort((a,b)=>(a.t||0)-(b.t||0));
+    for(const reply of replies)out.push(Object.assign({},reply,{threadDepth:1,replyOrphan:false}));
+  }
+  return out;
+}
 function renderMsgs(ms){
   const box=$('#msgBody');box.innerHTML='';
   if(!ms.length){box.appendChild(divT('empty','메시지 없음'));return;}
-  let prevDate='',prevSender=null;
-  for(let i=0;i<ms.length;i++){
-    const m=ms[i];
+  const ordered=threadMessages(ms);
+  let prevDate='',prevSender=null,prevDepth=-1;
+  for(let i=0;i<ordered.length;i++){
+    const m=ordered[i];
     const d=m.t?fmtD(m.t):'';
-    if(d&&d!==prevDate){box.appendChild(divT('dsep',d));prevDate=d;prevSender=null;}
+    if(m.threadDepth===0&&d&&d!==prevDate){box.appendChild(divT('dsep',d));prevDate=d;prevSender=null;prevDepth=-1;}
     if(m.sys){box.appendChild(divT('sysline',m.sys));prevSender=null;continue;}
     const mine=m.s===MY;
-    const row=div('mrow'+(mine?' mine':''));
-    row.dataset.mid=m.id;
+    const row=div('mrow'+(mine?' mine':'')+(m.threadDepth?' reply':'')+(m.replyOrphan?' orphan':''));
+    row.dataset.mid=m.mid;
     if(!mine){
-      const showHead=m.s!==prevSender;
+      const showHead=m.s!==prevSender||m.threadDepth!==prevDepth;
       const av=div('av'+(showHead?'':' ghost'));
       av.textContent=showHead?(nm(m.s)||'?').slice(0,1):'';
       row.appendChild(av);
       const col=div('mcol');
       if(showHead){const s=sub(m.s);col.appendChild(divT('sname',nm(m.s)+(s?' \\u00B7 '+s:'')));}
-      col.appendChild(bubbleWrap(m,ms[i+1],false));
+      col.appendChild(bubbleWrap(m,ordered[i+1],false));
       row.appendChild(col);
     }else{
-      row.appendChild(bubbleWrap(m,ms[i+1],true));
+      row.appendChild(bubbleWrap(m,ordered[i+1],true));
     }
     box.appendChild(row);
     prevSender=m.s;
+    prevDepth=m.threadDepth;
   }
   box.scrollTop=box.scrollHeight;
 }
