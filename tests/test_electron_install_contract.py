@@ -6,6 +6,9 @@ SETUP = (ROOT / "publish" / "setup.ps1").read_text(encoding="utf-8")
 INSTALL = (ROOT / "publish" / "install.ps1").read_text(encoding="utf-8")
 UNINSTALL = (ROOT / "publish" / "uninstall.ps1").read_text(encoding="utf-8")
 PACK = (ROOT / "publish" / "make-install-zip.ps1").read_text(encoding="utf-8")
+ELECTRON_LAUNCHER = (ROOT / "electron" / "teams-viewer-electron.bat").read_text(
+    encoding="utf-8"
+)
 
 
 def test_one_click_installs_and_shortcuts_electron():
@@ -16,6 +19,11 @@ def test_one_click_installs_and_shortcuts_electron():
     assert "$shortcut.Arguments = \"`\"$ElectronDir`\"\"" in SETUP
     assert "Install-Frida" in INSTALL
     assert "Database key capture" in INSTALL
+
+
+def test_electron_launcher_passes_app_path_without_trailing_backslash():
+    assert 'start "" "%ELECTRON_EXE%" "%~dp0."' in ELECTRON_LAUNCHER
+    assert 'start "" "%ELECTRON_EXE%" "%~dp0"' not in ELECTRON_LAUNCHER
 
 
 def test_uninstall_requires_explicit_data_opt_in():
