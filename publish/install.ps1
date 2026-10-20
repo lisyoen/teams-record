@@ -1,210 +1,164 @@
-<#
-  teams-record 원클릭 통합 설치 스크립트
-  다른 Windows ID(계정)에서도 재설치하여 사용할 수 있도록 아래 순서로 수행한다.
-
-    1. 의존성 우선 설치      : Python 3.11, Node.js LTS, npm/Electron, frida (키 캡처용)
-    2. 백엔드 + 바탕화면 바로가기 : 뷰어/복호화 런타임 배치, Teams Viewer 바로가기
-                               (키 캡처 시 Knox Teams 자동 종료 -> 재실행)
-    3. 부팅 후 데이터 자동 업데이트 : TeamsRecordViewer 로그온 스케줄 등록
-
-  기존 setup.ps1 의 검증된 함수(경로 계산/파일 배치/스케줄 등록/바로가기)를 재사용하되,
-  frida 의존성과 Knox 자동 재기동, 부팅 자동 업데이트까지 하나의 흐름으로 묶은 상위 진입점이다.
-
-  사용법 (관리자 권한 자동 승격):
-    publish\install.bat
-    publish\install.bat -KnoxRoot C:\mySingle\KnoxTeams -InstallRoot D:\teams-record
-    publish\install.bat -SkipKeyCapture      (키 캡처만 나중에 수동으로)
-    publish\install.bat -DataBackup C:\backup\teams-db  (이전 이력 복원)
-#>
 [CmdletBinding()]
-param(
-    [string]$DataBackup,
-    [string]$InstallRoot,
-    [string]$KnoxRoot,
-    [switch]$SkipKeyCapture,
-    [switch]$SkipDeps
-)
-
+param([string]$DataBackup, [string]$InstallRoot, [string]$KnoxRoot = 'C:\mySingle\KnoxTeams', [switch]$SkipKeyCapture, [switch]$SkipDeps, [switch]$Elevated)
 $ErrorActionPreference = 'Stop'
-$PublishRoot = $PSScriptRoot
-$SetupPs1    = Join-Path $PublishRoot 'setup.ps1'
-$CaptureBat  = Join-Path $PublishRoot 'capture-key.bat'
-$TaskName    = 'TeamsRecordViewer'
-
-if (-not $KnoxRoot) { $KnoxRoot = 'C:\mySingle\KnoxTeams' }
-$KnoxExe = Join-Path $KnoxRoot 'KnoxTeams.exe'
+$TaskName = 'TeamsRecordViewer'
+$RepoRoot = Split-Path -Parent $PSScriptRoot
 $WorkDir = Join-Path $env:USERPROFILE 'teams-record-work'
-$KeyPath = Join-Path $WorkDir 'dbkey.secret'
+$MarkerPath = Join-Path $WorkDir 'install-root.txt'
+$KnoxExe = Join-Path $KnoxRoot 'KnoxTeams.exe'
+$script:SelectedReason = ''
+$script:InstallSucceeded = $false
+$script:VersionVerified = $false
 
 function Test-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-    return ([Security.Principal.WindowsPrincipal]::new($id)).IsInRole(
-        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    ([Security.Principal.WindowsPrincipal]::new($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+function Quote-Arg([string]$Value) { '"' + ($Value -replace '"', '\"') + '"' }
+
+if (-not (Test-Admin)) {
+    Write-Host '[*] Requesting administrator privileges. Continue in the UAC-approved installer window...'
+    $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Quote-Arg $PSCommandPath),'-Elevated')
+    if ($DataBackup) { $args += @('-DataBackup',(Quote-Arg $DataBackup)) }
+    if ($InstallRoot) { $args += @('-InstallRoot',(Quote-Arg $InstallRoot)) }
+    if ($KnoxRoot) { $args += @('-KnoxRoot',(Quote-Arg $KnoxRoot)) }
+    if ($SkipKeyCapture) { $args += '-SkipKeyCapture' }
+    if ($SkipDeps) { $args += '-SkipDeps' }
+    $p = Start-Process powershell.exe -ArgumentList $args -Verb RunAs -Wait -PassThru
+    exit $p.ExitCode
 }
 
-function Ensure-Admin {
-    if (Test-Admin) { return }
-    Write-Host '[*] Requesting administrator privileges...'
-    $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$PSCommandPath`"")
-    if ($DataBackup)     { $a += @('-DataBackup',"`"$DataBackup`"") }
-    if ($InstallRoot)    { $a += @('-InstallRoot',"`"$InstallRoot`"") }
-    if ($KnoxRoot)       { $a += @('-KnoxRoot',"`"$KnoxRoot`"") }
-    if ($SkipKeyCapture) { $a += '-SkipKeyCapture' }
-    if ($SkipDeps)       { $a += '-SkipDeps' }
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $a -Verb RunAs
-    exit
+$LogDir = Join-Path $WorkDir 'logs'
+New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+$LogPath = Join-Path $LogDir (Get-Date -Format 'install-yyyyMMdd-HHmmss.log')
+Start-Transcript -LiteralPath $LogPath -Force | Out-Null
+function Write-Step([string]$Message) { Write-Host ''; Write-Host "==== $Message ====" -ForegroundColor Cyan }
+function Write-OK([string]$Message) { Write-Host "[OK] $Message" -ForegroundColor Green }
+
+function Get-DefaultInstallRoot {
+    $drive = Split-Path -Qualifier $RepoRoot
+    if ($drive -and $env:SystemDrive -and $drive -ine $env:SystemDrive) { return Join-Path ($drive + '\') 'teams-record' }
+    Join-Path $env:LOCALAPPDATA 'teams-record'
 }
-
-function Write-Step([string]$msg) { Write-Host ''; Write-Host "==== $msg ====" -ForegroundColor Cyan }
-function Write-OK([string]$msg)   { Write-Host "[OK] $msg" -ForegroundColor Green }
-function Write-Warn2([string]$msg){ Write-Warning $msg }
-
-function Get-PythonVersion {
-    $cmd = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $null }
+function Get-TaskInstallRoot {
     try {
-        $line = (& python --version 2>&1 | Select-Object -First 1).ToString()
-        if ($line -match 'Python\s+(\d+)\.(\d+)\.(\d+)') {
-            return [version]"$($Matches[1]).$($Matches[2]).$($Matches[3])"
+        $xml = [xml](& schtasks.exe /Query /TN $TaskName /XML 2>$null | Out-String)
+        $text = ([string]$xml.Task.Actions.Exec.Command) + ' ' + ([string]$xml.Task.Actions.Exec.Arguments)
+        if ($text -match '(?i)([A-Z]:\\[^"\r\n]*?\\viewer\\start_viewer\.bat)') { return Split-Path -Parent (Split-Path -Parent $Matches[1]) }
+    } catch {}
+    $null
+}
+function Get-ShortcutInstallRoot {
+    $path = Join-Path $env:USERPROFILE 'Desktop\Teams Viewer.lnk'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $link = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
+        foreach ($value in @($link.Arguments.Trim('"'), $link.TargetPath)) {
+            if ($value -match '(?i)^(.*)\\electron(?:\\.*)?$') { return $Matches[1] }
         }
     } catch {}
-    return $null
+    $null
 }
-
-function Install-Frida {
-    Write-Host '[*] Checking frida (used only for one-time DB key capture)...'
-    & python -c "import frida" 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-OK 'frida already installed'; return }
-    Write-Host '[*] Installing frida via pip...'
-    & python -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org frida
-    if ($LASTEXITCODE -ne 0) {
-        throw 'frida install failed. Install manually: python -m pip install frida'
+function Resolve-InstallRoot {
+    if ($InstallRoot) { $script:SelectedReason = 'explicit -InstallRoot'; return [IO.Path]::GetFullPath($InstallRoot) }
+    if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
+        $value = (Get-Content -LiteralPath $MarkerPath -Raw).Trim()
+        if ($value) { $script:SelectedReason = "marker: $MarkerPath"; return [IO.Path]::GetFullPath($value) }
     }
-    & python -c "import frida" 2>$null
-    if ($LASTEXITCODE -ne 0) { throw 'frida import still fails after install.' }
+    $value = Get-TaskInstallRoot
+    if ($value) { $script:SelectedReason = "scheduled task: $TaskName"; return [IO.Path]::GetFullPath($value) }
+    $value = Get-ShortcutInstallRoot
+    if ($value) { $script:SelectedReason = 'desktop shortcut: Teams Viewer.lnk'; return [IO.Path]::GetFullPath($value) }
+    $script:SelectedReason = 'default path'; Get-DefaultInstallRoot
+}
+function Stop-ViewerProcesses {
+    Write-Step '1/7 Stop viewer and Electron'
+    try { Get-NetTCPConnection -LocalPort 8799 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } } catch {}
+    try { Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($InstallRoot,[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } } catch {}
+    Write-OK 'port 8799 listener and installed Electron processes stopped'
+}
+function Stop-KnoxTeams {
+    Write-Step '2/7 Stop Knox Teams'
+    Get-Process -Name KnoxTeams -ErrorAction SilentlyContinue | ForEach-Object { try { $_.CloseMainWindow() | Out-Null } catch {} }
+    Start-Sleep -Seconds 2
+    Get-Process -Name KnoxTeams -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Write-OK 'Knox Teams stopped (or was not running)'
+}
+function Start-KnoxTeams {
+    if (Test-Path -LiteralPath $KnoxExe -PathType Leaf) { Start-Process -FilePath $KnoxExe | Out-Null; Write-OK 'Knox Teams relaunched' }
+    else { Write-Warning "Knox Teams could not be relaunched: $KnoxExe" }
+}
+function Install-Frida {
+    & python -c 'import frida' 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-OK 'frida already installed'; return }
+    & python -m pip install frida
+    if ($LASTEXITCODE -ne 0) { throw "frida installation failed (exit $LASTEXITCODE)" }
+    & python -c 'import frida'
+    if ($LASTEXITCODE -ne 0) { throw 'frida import verification failed' }
     Write-OK 'frida installed'
 }
 
-function Stop-KnoxTeams {
-    $procs = Get-Process -Name 'KnoxTeams' -ErrorAction SilentlyContinue
-    if (-not $procs) { Write-Host '[*] Knox Teams is not running (nothing to stop).'; return $false }
-    Write-Host "[*] Knox Teams is running ($($procs.Count) process). Closing it before key capture..."
-    foreach ($p in $procs) {
-        try { $p.CloseMainWindow() | Out-Null } catch {}
-    }
-    Start-Sleep -Seconds 2
-    $still = Get-Process -Name 'KnoxTeams' -ErrorAction SilentlyContinue
-    if ($still) {
-        Write-Host '[*] Forcing remaining Knox Teams processes to close...'
-        $still | Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-    }
-    Write-OK 'Knox Teams stopped'
-    return $true
-}
+try {
+    Write-Host 'teams-record one-click installer' -ForegroundColor White
+    Write-Host "Log         : $LogPath"
+    $InstallRoot = Resolve-InstallRoot
+    Write-Host "InstallRoot : $InstallRoot"
+    Write-Host "Selected by : $script:SelectedReason"
+    Stop-ViewerProcesses
+    Stop-KnoxTeams
 
-function Start-KnoxTeams {
-    if (Test-Path -LiteralPath $KnoxExe) {
-        Write-Host '[*] Relaunching Knox Teams...'
-        Start-Process -FilePath $KnoxExe | Out-Null
-        Write-OK 'Knox Teams relaunched (please sign in if prompted)'
-    } else {
-        Write-Warn2 "KnoxTeams.exe not found at $KnoxExe; relaunch manually and sign in."
-    }
-}
+    Write-Step '3/7 Install dependencies and application files'
+    $setup = Join-Path $PSScriptRoot 'setup.ps1'
+    $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Quote-Arg $setup),'-InstallRoot',(Quote-Arg $InstallRoot),'-KnoxRoot',(Quote-Arg $KnoxRoot))
+    if ($DataBackup) { $args += @('-DataBackup',(Quote-Arg $DataBackup)) }
+    if ($SkipDeps) { $args += '-SkipDependencies' }
+    $p = Start-Process powershell.exe -ArgumentList $args -Wait -PassThru -NoNewWindow
+    if ($p.ExitCode -ne 0) { throw "setup.ps1 failed with exit code $($p.ExitCode)" }
+    Write-OK 'application files, task, shortcut, and Electron installed'
 
-# ============================================================
-# 0. 사전 점검
-# ============================================================
-Ensure-Admin
-
-Write-Host 'teams-record one-click installer' -ForegroundColor White
-Write-Host "PublishRoot : $PublishRoot"
-Write-Host "KnoxRoot    : $KnoxRoot"
-Write-Host "WorkDir     : $WorkDir"
-
-if (-not (Test-Path -LiteralPath $SetupPs1)) {
-    throw "setup.ps1 not found next to install.ps1: $SetupPs1"
-}
-
-# ============================================================
-# 1. 의존성 우선 설치 (Python 3.11 + Node.js/npm + frida)
-# ============================================================
-Write-Step '1. Dependencies'
-if ($SkipDeps) {
-    Write-Warn2 'SkipDeps set: dependency install is skipped (assumes Python 3.11 + Node.js/npm + frida already present).'
-} else {
-    $pv = Get-PythonVersion
-    if ($pv -and $pv.Major -eq 3 -and $pv.Minor -eq 11) {
-        Write-OK "Python $pv already available (setup.ps1 will re-verify)"
-    } else {
-        Write-Host '[*] Python 3.11 and Node.js LTS will be installed by setup.ps1 in the next step.'
-    }
-}
-
-# ============================================================
-# 2. 백엔드 + 바탕화면 바로가기 + 부팅 자동 업데이트 (setup.ps1)
-# ============================================================
-Write-Step '2. Backend + Electron app + desktop shortcut + logon task (via setup.ps1)'
-$setupArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$SetupPs1`"",'-KnoxRoot',"`"$KnoxRoot`"")
-if ($DataBackup)  { $setupArgs += @('-DataBackup',"`"$DataBackup`"") }
-if ($InstallRoot) { $setupArgs += @('-InstallRoot',"`"$InstallRoot`"") }
-if ($SkipDeps)    { $setupArgs += '-SkipDependencies' }
-$p = Start-Process -FilePath 'powershell.exe' -ArgumentList $setupArgs -Wait -PassThru -NoNewWindow
-if ($p.ExitCode -ne 0) {
-    throw "setup.ps1 failed with exit code $($p.ExitCode)."
-}
-Write-OK 'setup.ps1 completed (files, Electron dependencies, shortcut, and logon task in place)'
-
-if (-not $SkipDeps) { Install-Frida }
-
-# ============================================================
-# 2b. DB 키 캡처 (Knox Teams 자동 종료 -> 재실행)
-# ============================================================
-Write-Step '2b. Database key capture'
-if ($SkipKeyCapture) {
-    Write-Warn2 'SkipKeyCapture set: run publish\capture-key.bat manually after Knox Teams login.'
-} elseif (Test-Path -LiteralPath $KeyPath) {
-    Write-OK 'dbkey.secret already present; key capture skipped.'
-} elseif (-not (Test-Path -LiteralPath $KnoxExe)) {
-    Write-Warn2 "KnoxTeams.exe not found at $KnoxExe. Skipping key capture. Install/sign in to Knox Teams, then run publish\capture-key.bat."
-} else {
-    $wasRunning = Stop-KnoxTeams
-    try {
-        Write-Host '[*] Capturing SQLCipher key from a fresh Knox Teams instance (frida spawn)...'
+    Write-Step '4/7 Database key capture (verify frida first)'
+    if (-not $SkipDeps) { Install-Frida }
+    $key = Join-Path $WorkDir 'dbkey.secret'
+    if ($SkipKeyCapture) { Write-Warning 'Key capture skipped by option.' }
+    elseif (Test-Path -LiteralPath $key) { Write-OK 'existing dbkey.secret preserved; capture skipped' }
+    elseif (-not (Test-Path -LiteralPath $KnoxExe)) { Write-Warning 'Knox Teams executable missing; key capture skipped.' }
+    else {
         $env:KNOX_ROOT = $KnoxRoot
-        $c = Start-Process -FilePath $env:ComSpec -ArgumentList @('/d','/c',"`"$CaptureBat`"") -Wait -PassThru -NoNewWindow
-        if ($c.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $KeyPath)) {
-            Write-Warn2 "Key capture did not complete (exit $($c.ExitCode)). You can retry later: publish\capture-key.bat (Knox must be signed in)."
-        } else {
-            Write-OK 'dbkey.secret captured'
-        }
-    } finally {
-        Stop-KnoxTeams | Out-Null
-        Start-KnoxTeams
+        & $env:ComSpec /d /c "`"$(Join-Path $PSScriptRoot 'capture-key.bat')`""
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $key)) { throw 'database key capture failed' }
+        Write-OK 'dbkey.secret captured'
+        Get-Process -Name KnoxTeams -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
-}
 
-# ============================================================
-# 3. 부팅 후 데이터 자동 업데이트 확인
-# ============================================================
-Write-Step '3. Boot-time auto-update (scheduled task) verification'
-$q = & $env:ComSpec /d /c "schtasks.exe /Query /TN `"$TaskName`" >nul 2>nul"
-if ($LASTEXITCODE -eq 0) {
-    Write-OK "scheduled task '$TaskName' is registered (runs at logon: refresh archive + start viewer)"
-} else {
-    Write-Warn2 "scheduled task '$TaskName' not found. Re-run publish\setup.bat."
-}
+    Write-Step '5/7 First archive refresh'
+    & $env:ComSpec /d /c "`"$(Join-Path $InstallRoot 'viewer\refresh_archive.bat')`""
+    if ($LASTEXITCODE -ne 0) { throw "first refresh failed with exit code $LASTEXITCODE" }
+    Write-OK 'first refresh completed'
 
-# ============================================================
-# 완료 안내
-# ============================================================
-Write-Host ''
-Write-Host '==== Install finished ====' -ForegroundColor White
-Write-Host 'Next:'
-Write-Host '  - Desktop shortcut "Teams Viewer" opens the Electron app'
-Write-Host '  - On each logon, TeamsRecordViewer refreshes the archive and starts the viewer.'
-if ($SkipKeyCapture -or -not (Test-Path -LiteralPath $KeyPath)) {
-    Write-Host '  - If data does not decrypt, sign in to Knox Teams and run publish\capture-key.bat once.'
+    Write-Step '6/7 Start Teams Viewer and verify version'
+    & $env:ComSpec /d /c "`"$(Join-Path $InstallRoot 'electron\teams-viewer-electron.bat')`""
+    $expected = (Get-Content -LiteralPath (Join-Path $RepoRoot 'VERSION') -Raw).Trim()
+    for ($i=0; $i -lt 20; $i++) {
+        try { $response = Invoke-RestMethod 'http://127.0.0.1:8799/api/version' -Proxy $null -TimeoutSec 2; if ([string]$response.local -eq $expected) { $script:VersionVerified = $true; break } } catch {}
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $script:VersionVerified) { throw "viewer version verification failed; expected $expected" }
+    Write-OK "viewer /api/version matches package VERSION $expected"
+
+    Write-Step '7/7 Save installation marker'
+    Set-Content -LiteralPath $MarkerPath -Value $InstallRoot -Encoding UTF8
+    $script:InstallSucceeded = $true
+} catch {
+    Write-Host "[FAILED] $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Log: $LogPath"
+} finally {
+    Write-Host ''; Write-Host '==== Result summary ====' -ForegroundColor White
+    Write-Host "InstallRoot      : $InstallRoot"
+    Write-Host "Selection reason : $script:SelectedReason"
+    Write-Host "Version verified : $script:VersionVerified"
+    Write-Host "Log              : $LogPath"
+    Start-KnoxTeams
+    try { Stop-Transcript | Out-Null } catch {}
 }
-Write-Host '  - Verify anytime with:  publish\setup.bat -CheckOnly'
+if ($script:InstallSucceeded) { Write-Host '[SUCCESS] Installation completed.' -ForegroundColor Green; exit 0 }
+exit 1

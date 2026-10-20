@@ -1,3 +1,5 @@
+압축 풀고 루트의 `install.bat`를 실행하세요.
+
 # teams-record
 
 Knox Teams(삼성SDS 사내 메신저)의 짧은 로컬 대화 보관 기간을 보완하기 위해, 본인 대화를 로컬 SQLite 데이터베이스에 백업하고 웹 뷰어로 열람하는 개인용 도구입니다.
@@ -17,7 +19,7 @@ Knox Teams(삼성SDS 사내 메신저)의 짧은 로컬 대화 보관 기간을 
 
 - `viewer/`: Python 표준 라이브러리 기반 로컬 웹 뷰어. `127.0.0.1:8799`에만 바인딩합니다.
 - `electron/`: 웹 뷰어를 전용 창으로 실행하는 Electron 앱입니다.
-- `publish/`: 의존성 설치, 키 캡처, 데이터 갱신, 뷰어 등록을 묶은 Windows 설치 패키지입니다.
+- `publish/`: 루트 `install.bat`가 호출하는 설치 로직과 Linux/Windows 공용 ZIP 빌더를 담습니다.
 
 Knox Teams의 기본 설치 위치는 `C:\mySingle\KnoxTeams`이며, 설치 패키지 옵션으로 다른 위치를 지정할 수 있습니다.
 

@@ -25,7 +25,8 @@ cd /d "%WORK%"
 python -c "import frida" >nul 2>&1
 if errorlevel 1 (
   echo Frida is not installed. Installing frida...
-  python -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org frida
+  REM pip inherits the system/environment proxy configuration; no proxy is hardcoded.
+  python -m pip install frida
   if errorlevel 1 (
     echo ERROR: Frida install failed. Install it manually, then rerun this file.
     exit /b 1

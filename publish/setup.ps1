@@ -87,13 +87,17 @@ function Get-RequiredSources {
     $items = @()
 
     $viewerSource = Join-Path $RepoRoot 'viewer'
-    foreach ($name in @('server.py', 'merge_archive.py', 'refresh_archive.bat', 'start_viewer.bat', 'teams-viewer.bat')) {
+    foreach ($name in @('server.py', 'merge_archive.py', 'refresh_archive.bat', 'start_viewer.bat', 'teams-viewer.bat', 'update-check.bat')) {
         $items += [pscustomobject]@{
             Group = 'viewer'
             Name = $name
             Source = Join-Path $viewerSource $name
             Destination = Join-Path $ViewerDir $name
         }
+    }
+
+    $items += [pscustomobject]@{
+        Group = 'viewer'; Name = 'VERSION'; Source = Join-Path $RepoRoot 'VERSION'; Destination = Join-Path $ViewerDir 'VERSION'
     }
 
     $workSource = Join-Path $PSScriptRoot 'work'
@@ -350,9 +354,11 @@ function Restore-Data {
     Test-DataBackupPath
 
     $archive = Join-Path $DataBackup 'teams-archive.db'
-    if (Test-Path -LiteralPath $archive) {
+    if ((Test-Path -LiteralPath $archive) -and -not (Test-Path -LiteralPath (Join-Path $InstallRoot 'teams-archive.db'))) {
         Copy-Item -LiteralPath $archive -Destination (Join-Path $InstallRoot 'teams-archive.db') -Force
         Add-Summary "teams-archive.db restored"
+    } elseif (Test-Path -LiteralPath (Join-Path $InstallRoot 'teams-archive.db')) {
+        Add-Summary "existing teams-archive.db preserved"
     } else {
         Add-WarningLine "DataBackup does not contain teams-archive.db"
     }
@@ -360,8 +366,15 @@ function Restore-Data {
     $backupThumbs = Join-Path $DataBackup 'thumbs'
     if (Test-Path -LiteralPath $backupThumbs) {
         Ensure-Directory $ThumbsDir
-        Copy-Item -Path (Join-Path $backupThumbs '*') -Destination $ThumbsDir -Recurse -Force -ErrorAction SilentlyContinue
-        Add-Summary "thumbs restored"
+        Get-ChildItem -LiteralPath $backupThumbs -File -Recurse | ForEach-Object {
+            $relative = $_.FullName.Substring($backupThumbs.Length).TrimStart('\')
+            $destination = Join-Path $ThumbsDir $relative
+            if (-not (Test-Path -LiteralPath $destination)) {
+                Ensure-Directory (Split-Path -Parent $destination)
+                Copy-Item -LiteralPath $_.FullName -Destination $destination
+            }
+        }
+        Add-Summary "missing thumbs restored; existing files preserved"
     } else {
         Add-WarningLine "DataBackup does not contain thumbs"
     }
