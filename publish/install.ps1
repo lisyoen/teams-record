@@ -160,5 +160,8 @@ try {
     Start-KnoxTeams
     try { Stop-Transcript | Out-Null } catch {}
 }
-if ($script:InstallSucceeded) { Write-Host '[SUCCESS] Installation completed.' -ForegroundColor Green; exit 0 }
-exit 1
+$exitCode = 1
+if ($script:InstallSucceeded) { Write-Host '[SUCCESS] Installation completed.' -ForegroundColor Green; $exitCode = 0 }
+Write-Host ''
+[void](Read-Host 'Press Enter to close this installer')
+exit $exitCode
