@@ -248,3 +248,31 @@ def test_rollback_requires_previous_version(trlite, capsys):
     capsys.readouterr()
     assert trlite.main(["update", "--rollback"]) == 0
     assert (trlite.ROOT / "rollback.request").is_file()
+
+
+def test_archive_path_config_shares_viewer_archive(trlite, tmp_path, capsys):
+    shared = tmp_path / "viewer" / "teams-archive.db"
+    trlite.save_json(trlite.CONFIG_PATH, {"archive_path": str(shared)})
+    assert trlite.archive_file() == shared
+    trlite.main(["status"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["archive"]["archive_path"] == str(shared)
+
+
+def test_ensure_key_follows_newer_viewer_key(trlite):
+    import os, time
+    trlite.WORK.mkdir(parents=True)
+    trlite.KEY_PATH.write_text("old", encoding="utf-8")
+    os.utime(trlite.KEY_PATH, (time.time() - 100, time.time() - 100))
+    trlite.ensure_key()  # no legacy key -> keep own key
+    assert trlite.KEY_PATH.read_text(encoding="utf-8") == "old"
+    trlite.LEGACY_KEY.parent.mkdir(parents=True)
+    trlite.LEGACY_KEY.write_text("new", encoding="utf-8")
+    trlite.ensure_key()
+    assert trlite.KEY_PATH.read_text(encoding="utf-8") == "new"
+
+
+def test_lite_installer_supports_repo_layout_and_shared_archive():
+    text = (LITE / "setup/lite-install.ps1").read_text(encoding="utf-8-sig")
+    assert "$RepoLayout" in text and "viewer\\merge_archive.py" in text
+    assert "$ArchivePath" in text and "archive_path" in text

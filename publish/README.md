@@ -1,5 +1,19 @@
 # teams-record Windows 원클릭 설치
 
+## 설치 유형 선택
+
+ZIP 최상위 `install.bat` 을 실행하면 먼저 Teams Viewer 설치 여부를 묻습니다.
+
+| 선택 | 설치 내용 | 관리자 권한 |
+|---|---|---|
+| 예 | Teams Viewer(아래 절차) + 명령줄 도구(CLI). CLI 는 Viewer 의 `teams-archive.db` 와 DB 키를 함께 사용 | 필요(UAC) |
+| 아니오 | 명령줄 도구(CLI)만 `%LOCALAPPDATA%\teams-record-lite` 에 설치 (`lite/README.md`) | 불필요 |
+| 취소 | 설치하지 않음 | - |
+
+창 없이 지정하려면 `install.bat -Mode viewer` 또는 `install.bat -Mode cli -NoPopup` 을 사용합니다. CLI 위치는 `-CliInstallDir` 로 바꿀 수 있습니다. Viewer 만 단독으로 설치하려면 `publish\install.bat` 을 실행합니다.
+
+## Teams Viewer 설치 절차
+
 GitHub Release의 `teams-record-v<VERSION>-install.zip`을 일반 폴더에 압축 해제하고, ZIP 최상위의 `install.bat`를 한 번 실행한 뒤 UAC를 승인합니다. 설치 창은 완료될 때까지 단계별 상태를 표시하고 마지막에 결과를 요약한 뒤 대기합니다. 전체 로그는 `%USERPROFILE%\teams-record-work\logs\install-YYYYMMDD-HHMMSS.log`에 남습니다.
 
 설치 프로그램은 8799 리스너, 선택된 설치 경로의 Electron, Knox Teams를 먼저 종료합니다. 기존 설치 위치는 다음 우선순위로 자동 선택됩니다.

@@ -53,6 +53,7 @@ DEFAULT_CONFIG = {
     "auto_update": True,
     "update_interval_hours": 24,
     "knox_root": "",
+    "archive_path": "",
 }
 
 EXIT_OK, EXIT_OTHER, EXIT_NOT_INSTALLED, EXIT_NO_KEY = 0, 1, 2, 3
@@ -193,18 +194,26 @@ def find_live_db() -> Path:
     return dbs[0]
 
 
+def archive_file() -> Path:
+    """Archive DB; config archive_path lets the CLI share the Teams Viewer archive."""
+    custom = str(load_config().get("archive_path") or "").strip()
+    return Path(custom) if custom else ARCHIVE
+
+
 def runtime_python() -> str:
     exe = ROOT / "runtime" / "python" / "python.exe"
     return str(exe) if exe.is_file() else sys.executable
 
 
 def ensure_key() -> None:
-    if KEY_PATH.is_file() and KEY_PATH.read_text(encoding="utf-8").strip():
-        return
-    if LEGACY_KEY.is_file():
+    have = KEY_PATH.is_file() and KEY_PATH.read_text(encoding="utf-8").strip()
+    if LEGACY_KEY.is_file() and (not have or LEGACY_KEY.stat().st_mtime > KEY_PATH.stat().st_mtime):
+        # the Teams Viewer installation recaptured its key; follow it
         WORK.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(LEGACY_KEY, KEY_PATH)
         log("existing dbkey.secret reused")
+        return
+    if have:
         return
     raise LiteError(EXIT_NO_KEY, "DB 키(dbkey.secret)가 없습니다. 'teams-record-lite capture-key' 를 실행해 주세요.")
 
@@ -253,8 +262,9 @@ def do_refresh(timeout: float) -> dict:
         knox = find_knox_root(config)
         ensure_key()
         live = find_live_db()
+        archive = archive_file()
         WORK.mkdir(parents=True, exist_ok=True)
-        DATA.mkdir(parents=True, exist_ok=True)
+        archive.parent.mkdir(parents=True, exist_ok=True)
         out_dir = WORK / "out"
         try:
             log("[1/3] snapshot live DB")
@@ -287,7 +297,7 @@ def do_refresh(timeout: float) -> dict:
             log("[3/3] merge into archive")
             remaining = timeout - (time.monotonic() - start)
             env2 = dict(os.environ, PYTHONUTF8="1")
-            out = run_step([runtime_python(), str(APP_DIR / "merge_archive.py"), str(decrypted), str(ARCHIVE)],
+            out = run_step([runtime_python(), str(APP_DIR / "merge_archive.py"), str(decrypted), str(archive)],
                            env2, remaining, "merge")
             if "MERGE_OK" not in out:
                 raise LiteError(EXIT_REFRESH_FAILED, "아카이브 병합 결과를 확인하지 못했습니다.", out[-2000:])
@@ -307,7 +317,7 @@ def do_refresh(timeout: float) -> dict:
         "totals": merged["totals"],
         "last_merge": merged["last_merge"],
         "schema_added": merged["schema_added"],
-        "archive_path": str(ARCHIVE),
+        "archive_path": str(archive),
         "error_code": EXIT_OK,
         "message": "대화 내용을 갱신했습니다.",
     }
@@ -315,11 +325,12 @@ def do_refresh(timeout: float) -> dict:
 
 # ------------------------------------------------------------------- status
 def archive_summary() -> dict:
-    info = {"archive_path": str(ARCHIVE), "exists": ARCHIVE.is_file()}
-    if not ARCHIVE.is_file():
+    archive = archive_file()
+    info = {"archive_path": str(archive), "exists": archive.is_file()}
+    if not archive.is_file():
         return info
-    info["size_bytes"] = ARCHIVE.stat().st_size
-    uri = "file:" + urllib.request.pathname2url(str(ARCHIVE)) + "?mode=ro"
+    info["size_bytes"] = archive.stat().st_size
+    uri = "file:" + urllib.request.pathname2url(str(archive)) + "?mode=ro"
     try:
         con = sqlite3.connect(uri, uri=True)
         try:

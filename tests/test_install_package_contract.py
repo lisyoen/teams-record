@@ -16,7 +16,7 @@ def test_root_installer_exists_and_uses_crlf():
     data = (ROOT / "install.bat").read_bytes()
     assert data.startswith(b"@echo off\r\n")
     assert b"\n" not in data.replace(b"\r\n", b"")
-    assert b"publish\\install.ps1" in data
+    assert b"publish\\install-select.ps1" in data
     assert b"if not \"%INSTALL_EXIT%\"==\"0\"" in data
     assert "Teams Record 설치 완료" in INSTALL
     assert "Teams Record 설치 실패" in INSTALL
@@ -52,3 +52,18 @@ def test_dependency_install_does_not_hardcode_proxy_or_trusted_hosts():
     capture = (ROOT / "publish/capture-key.bat").read_text(encoding="utf-8")
     assert "--proxy" not in INSTALL + SETUP + capture
     assert "--trusted-host" not in INSTALL + SETUP + capture
+
+
+def test_installer_asks_viewer_or_cli_only():
+    select = (ROOT / "publish/install-select.ps1").read_bytes()
+    assert select.startswith(b"\xef\xbb\xbf")
+    text = select.decode("utf-8-sig")
+    assert "Teams Viewer(대화 열람 화면)도 함께 설치할까요?" in text
+    assert "YesNoCancel" in text
+    assert "lite\\setup\\lite-install.ps1" in text and "install.ps1" in text
+    assert "-ArchivePath" in text  # viewer + CLI share one archive
+    names = set(builder.WHITELIST)
+    for required in ("publish/install-select.ps1", "lite/app/trlite.py", "lite/setup/lite-install.ps1",
+                     "lite/teams-record-lite.bat", "lite/uninstall.bat", "lite/README.md", "lite/AGENT.md",
+                     "lite/setup/lite-uninstall.ps1"):
+        assert required in names

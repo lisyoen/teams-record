@@ -15,7 +15,9 @@ ZIP_PATH = DIST / f"teams-record-v{VERSION}-install.zip"
 
 WHITELIST = (
     "install.bat", "README.md", "VERSION",
-    "publish/README.md", "publish/install.bat", "publish/install.ps1",
+    "publish/README.md", "publish/install.bat", "publish/install.ps1", "publish/install-select.ps1",
+    "lite/app/trlite.py", "lite/setup/lite-install.ps1", "lite/setup/lite-uninstall.ps1",
+    "lite/teams-record-lite.bat", "lite/uninstall.bat", "lite/README.md", "lite/AGENT.md",
     "publish/setup.bat", "publish/setup.ps1", "publish/capture-key.bat",
     "publish/uninstall.bat", "publish/uninstall.ps1",
     "publish/work/decrypt_export.js", "publish/work/sqlite3.js",

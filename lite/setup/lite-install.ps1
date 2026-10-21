@@ -3,7 +3,8 @@ param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'teams-record-lite'),
     [switch]$NoPopup,
     [switch]$SkipKeyCapture,
-    [string]$FridaVersion = ''
+    [string]$FridaVersion = '',
+    [string]$ArchivePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +13,11 @@ $ErrorActionPreference = 'Stop'
 $OutputEncoding = [Console]::OutputEncoding
 
 $PackageRoot = Split-Path -Parent $PSScriptRoot
-$Version = (Get-Content -LiteralPath (Join-Path $PackageRoot 'VERSION') -Raw).Trim()
+# Two layouts: the lite ZIP (app\ is complete) or the full repository/package (lite\ inside the repo).
+$RepoLayout = -not (Test-Path -LiteralPath (Join-Path $PackageRoot 'app\merge_archive.py'))
+$RepoRoot = Split-Path -Parent $PackageRoot
+$VersionFile = if ($RepoLayout) { Join-Path $RepoRoot 'VERSION' } else { Join-Path $PackageRoot 'VERSION' }
+$Version = (Get-Content -LiteralPath $VersionFile -Raw).Trim()
 $PythonVersion = '3.11.9'
 $PythonEmbedUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
 $PythonEmbedSha256 = '009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b'
@@ -80,6 +85,10 @@ function Invoke-Cli([string[]]$CliArgs) {
     return [pscustomobject]@{ Code = $code; Text = $text; Json = $json }
 }
 
+function Write-Utf8NoBom([string]$Path, [string]$Text) {
+    [System.IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function Install-Payload {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     foreach ($d in 'work', 'data', 'logs', 'setup') { New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir $d) | Out-Null }
@@ -91,8 +100,26 @@ function Install-Payload {
         if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force }
         Move-Item -LiteralPath $app -Destination $old
     }
-    Copy-Item -LiteralPath (Join-Path $PackageRoot 'app') -Destination $app -Recurse -Force
-    foreach ($f in 'teams-record-lite.bat', 'uninstall.bat', 'README.md', 'AGENT.md', 'VERSION') {
+    if ($RepoLayout) {
+        New-Item -ItemType Directory -Force -Path $app | Out-Null
+        $sources = [ordered]@{
+            'trlite.py' = 'lite\app\trlite.py'
+            'merge_archive.py' = 'viewer\merge_archive.py'
+            'decrypt_export.js' = 'publish\work\decrypt_export.js'
+            'sqlite3.js' = 'publish\work\sqlite3.js'
+            'sqlite3-binding.js' = 'publish\work\sqlite3-binding.js'
+            'trace.js' = 'publish\work\trace.js'
+            'spawn_key.py' = 'publish\work\spawn_key.py'
+        }
+        foreach ($name in $sources.Keys) {
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $sources[$name]) -Destination (Join-Path $app $name) -Force
+        }
+    } else {
+        Copy-Item -LiteralPath (Join-Path $PackageRoot 'app') -Destination $app -Recurse -Force
+    }
+    Write-Utf8NoBom (Join-Path $app 'VERSION') "$Version`r`n"
+    Write-Utf8NoBom (Join-Path $InstallDir 'VERSION') "$Version`r`n"
+    foreach ($f in 'teams-record-lite.bat', 'uninstall.bat', 'README.md', 'AGENT.md') {
         Copy-Item -LiteralPath (Join-Path $PackageRoot $f) -Destination (Join-Path $InstallDir $f) -Force
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'lite-uninstall.ps1') -Destination (Join-Path $InstallDir 'setup\lite-uninstall.ps1') -Force
@@ -154,10 +181,6 @@ function Install-Runtime {
     Write-Host '[설치 완료] frida'
 }
 
-function Write-Utf8NoBom([string]$Path, [string]$Text) {
-    [System.IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding($false)))
-}
-
 function Initialize-Config {
     $config = Join-Path $InstallDir 'config.json'
     if (-not (Test-Path -LiteralPath $config)) {
@@ -171,6 +194,13 @@ function Initialize-Config {
         Write-Host "[설치 완료] 설정 파일: $config"
     } else {
         Write-Host '[건너뜀] 기존 설정 파일 보존'
+    }
+    if ($ArchivePath) {
+        $cfg = [ordered]@{}
+        (Get-Content -LiteralPath $config -Raw -Encoding utf8 | ConvertFrom-Json).psobject.Properties | ForEach-Object { $cfg[$_.Name] = $_.Value }
+        $cfg['archive_path'] = [System.IO.Path]::GetFullPath($ArchivePath)
+        Write-Utf8NoBom $config ($cfg | ConvertTo-Json)
+        Write-Host "[확인됨] Teams Viewer 와 같은 대화 아카이브 사용: $($cfg['archive_path'])"
     }
     $statePath = Join-Path $InstallDir 'state.json'
     $state = [ordered]@{}

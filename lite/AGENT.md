@@ -73,7 +73,7 @@ JSON 에도 `error_code` 와 한국어 `message` 가 들어 있습니다. 실패
 
 ## 아카이브 DB
 
-- 위치: `refresh` 결과의 `archive_path` (기본 `%LOCALAPPDATA%\teams-record-lite\data\teams-archive.db`)
+- 위치: `refresh`·`status` 결과의 `archive_path` 를 사용한다. 기본은 `%LOCALAPPDATA%\teams-record-lite\data\teams-archive.db` 이고, Teams Viewer 와 함께 설치된 PC 에서는 Viewer 설치 폴더의 `teams-archive.db` 다. 경로를 하드코딩하지 않는다.
 - Knox Teams 로컬 DB 의 테이블 구조를 그대로 누적 보관한다. 앱에서 오래되어 지워진 메시지도 남는다.
 - 읽기 전용 연결 권장: `sqlite3.connect("file:<경로>?mode=ro", uri=True)`
 - 시각(`SentTime`, `LastMsgTime`)은 Unix epoch **밀리초**다.
