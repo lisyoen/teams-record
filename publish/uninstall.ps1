@@ -63,7 +63,7 @@ $ViewerDir = Join-Path $InstallRoot 'viewer'
 $ElectronDir = Join-Path $InstallRoot 'electron'
 $ElectronExe = Join-Path $ElectronDir 'node_modules\electron\dist\electron.exe'
 $WorkDir = Join-Path $env:USERPROFILE 'teams-record-work'
-$ShortcutPath = Join-Path $env:USERPROFILE 'Desktop\Teams Viewer.lnk'
+$ShortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Teams Viewer.lnk'
 
 # Stop only processes whose command or executable points at this installation.
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {

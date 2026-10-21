@@ -1,16 +1,13 @@
 # teams-record Windows 원클릭 설치
 
-## 설치 유형 선택
+## 설치 구성
 
-ZIP 최상위 `install.bat` 을 실행하면 먼저 Teams Viewer 설치 여부를 묻습니다.
+ZIP 최상위 `install.bat` 은 설치 유형을 묻지 않고 항상 다음 순서로 설치합니다. 에이전트가 자동으로 설치할 수 있도록 선택 절차를 두지 않습니다.
 
-| 선택 | 설치 내용 | 관리자 권한 |
-|---|---|---|
-| 예 | Teams Viewer(아래 절차) + 명령줄 도구(CLI). CLI 는 Viewer 의 `teams-archive.db` 와 DB 키를 함께 사용 | 필요(UAC) |
-| 아니오 | 명령줄 도구(CLI)만 `%LOCALAPPDATA%\teams-record-lite` 에 설치 (`lite/README.md`) | 불필요 |
-| 취소 | 설치하지 않음 | - |
+1. Teams Viewer(아래 절차, 바탕화면 `Teams Viewer` 바로가기 포함). 관리자 권한(UAC) 승인이 필요합니다.
+2. 명령줄 도구(CLI)를 `%LOCALAPPDATA%\teams-record-lite` 에 설치하고, Viewer 의 `teams-archive.db` 와 DB 키를 함께 쓰도록 설정합니다 (`lite/README.md`).
 
-창 없이 지정하려면 `install.bat -Mode viewer` 또는 `install.bat -Mode cli -NoPopup` 을 사용합니다. CLI 위치는 `-CliInstallDir` 로 바꿀 수 있습니다. Viewer 만 단독으로 설치하려면 `publish\install.bat` 을 실행합니다.
+자동 설치에서는 `install.bat -NoPopup` 으로 안내·완료 팝업을 생략할 수 있습니다(UAC 승인은 Windows 정책상 생략되지 않습니다). CLI 위치는 `-CliInstallDir` 로 바꿀 수 있습니다.
 
 ## Teams Viewer 설치 절차
 

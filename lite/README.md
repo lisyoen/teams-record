@@ -4,7 +4,7 @@ Knox Teams 메신저의 로컬 대화 DB 를 읽어 누적 보관용 SQLite 아�
 
 ## 설치
 
-전체 설치 패키지(`teams-record-v<버전>-install.zip`)의 `install.bat` 에서 Viewer 설치 여부에 [아니오]를 고르면 CLI 만 설치됩니다. [예]를 고르면 Viewer 와 함께 설치되며, CLI 는 Viewer 의 대화 아카이브와 DB 키를 그대로 사용합니다. CLI 만 담은 zip 으로 설치하는 방법은 다음과 같습니다.
+기본 설치 방법은 전체 설치 패키지(`teams-record-v<버전>-install.zip`)의 `install.bat` 입니다. Teams Viewer 와 함께 항상 설치되며, CLI 는 Viewer 의 대화 아카이브와 DB 키를 그대로 사용합니다. 아래는 CLI 만 담은 zip(자동 업데이트용)으로 단독 설치하는 방법입니다.
 
 1. `teams-record-lite-v<버전>.zip` 을 내려받아 압축을 풉니다.
 2. `install.bat` 을 실행합니다.

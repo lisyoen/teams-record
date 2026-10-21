@@ -54,14 +54,18 @@ def test_dependency_install_does_not_hardcode_proxy_or_trusted_hosts():
     assert "--trusted-host" not in INSTALL + SETUP + capture
 
 
-def test_installer_asks_viewer_or_cli_only():
+def test_installer_always_installs_viewer_and_cli_without_question():
     select = (ROOT / "publish/install-select.ps1").read_bytes()
     assert select.startswith(b"\xef\xbb\xbf")
     text = select.decode("utf-8-sig")
-    assert "Teams Viewer(대화 열람 화면)도 함께 설치할까요?" in text
-    assert "YesNoCancel" in text
-    assert "lite\\setup\\lite-install.ps1" in text and "install.ps1" in text
+    assert "YesNoCancel" not in text and "함께 설치할까요" not in text and "$Mode" not in text
+    assert text.index("$ViewerInstaller $viewerArgs") < text.index("$CliInstaller $cliArgs")
     assert "-ArchivePath" in text  # viewer + CLI share one archive
+    assert "'-NoPopup'" in text
+    install = (ROOT / "publish/install.ps1").read_text(encoding="utf-8-sig")
+    assert "[switch]$NoPopup" in install and "if ($NoPopup) { $args += '-NoPopup' }" in install
+    setup = (ROOT / "publish/setup.ps1").read_text(encoding="utf-8-sig")
+    assert "Teams Viewer.lnk" in setup  # desktop shortcut is always created
     names = set(builder.WHITELIST)
     for required in ("publish/install-select.ps1", "lite/app/trlite.py", "lite/setup/lite-install.ps1",
                      "lite/teams-record-lite.bat", "lite/uninstall.bat", "lite/README.md", "lite/AGENT.md",

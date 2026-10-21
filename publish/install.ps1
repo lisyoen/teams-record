@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([string]$DataBackup, [string]$InstallRoot, [string]$KnoxRoot = 'C:\mySingle\KnoxTeams', [switch]$SkipKeyCapture, [switch]$SkipDeps, [switch]$Elevated)
+param([string]$DataBackup, [string]$InstallRoot, [string]$KnoxRoot = 'C:\mySingle\KnoxTeams', [switch]$SkipKeyCapture, [switch]$SkipDeps, [switch]$NoPopup, [switch]$Elevated)
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -26,6 +26,7 @@ function Quote-Arg([string]$Value) { '"' + ($Value -replace '"', '\"') + '"' }
 
 Add-Type -AssemblyName System.Windows.Forms
 function Show-InstallerMessage([string]$Text, [string]$Caption, [System.Windows.Forms.MessageBoxButtons]$Buttons, [System.Windows.Forms.MessageBoxIcon]$Icon) {
+    if ($NoPopup) { Write-Host $Text; return [System.Windows.Forms.DialogResult]::OK }
     [System.Windows.Forms.MessageBox]::Show($Text, $Caption, $Buttons, $Icon)
 }
 
@@ -46,6 +47,7 @@ if (-not (Test-Admin)) {
     if ($KnoxRoot) { $args += @('-KnoxRoot',(Quote-Arg $KnoxRoot)) }
     if ($SkipKeyCapture) { $args += '-SkipKeyCapture' }
     if ($SkipDeps) { $args += '-SkipDeps' }
+    if ($NoPopup) { $args += '-NoPopup' }
     $p = Start-Process powershell.exe -ArgumentList $args -Verb RunAs -Wait -PassThru
     exit $p.ExitCode
 }
@@ -106,7 +108,7 @@ function Get-TaskInstallRoot {
     $null
 }
 function Get-ShortcutInstallRoot {
-    $path = Join-Path $env:USERPROFILE 'Desktop\Teams Viewer.lnk'
+    $path = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Teams Viewer.lnk'
     if (-not (Test-Path -LiteralPath $path)) { return $null }
     try {
         $link = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
