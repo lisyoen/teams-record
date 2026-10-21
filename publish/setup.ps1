@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$DataBackup,
     [string]$InstallRoot,
@@ -9,6 +9,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
 
 $TaskName = 'TeamsRecordViewer'
 
@@ -43,6 +46,10 @@ $CurrentUser = (& whoami).Trim()
 
 $Summary = New-Object System.Collections.Generic.List[string]
 $Warnings = New-Object System.Collections.Generic.List[string]
+$script:PythonExe = $null
+$script:NodeExe = $null
+$script:NpmExe = $null
+$script:ProxyUri = $null
 
 function Invoke-SchtasksQuiet([string]$ArgumentLine) {
     & $env:ComSpec /d /c "schtasks.exe $ArgumentLine >nul 2>nul"
@@ -51,7 +58,12 @@ function Invoke-SchtasksQuiet([string]$ArgumentLine) {
 
 function Add-Summary([string]$Message) {
     $Summary.Add($Message) | Out-Null
-    Write-Host "[OK] $Message"
+    Write-Host "[확인됨] $Message"
+}
+
+function Write-ComponentStatus([string]$Component, [string]$Status, [string]$Detail = '') {
+    $suffix = if ($Detail) { ": $Detail" } else { '' }
+    Write-Host ("[{0}] {1}{2}" -f $Status, $Component, $suffix)
 }
 
 function Add-WarningLine([string]$Message) {
@@ -160,14 +172,64 @@ function Copy-RequiredFile([string]$Source, [string]$Destination) {
 function Refresh-EnvironmentPath {
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = "$machine;$user"
+    $current = $env:Path
+    $env:Path = (@($machine, $user, $current) | Where-Object { $_ }) -join ';'
+}
+
+function Resolve-Executable([string]$Command, [string[]]$FallbackPaths) {
+    foreach ($candidate in $FallbackPaths) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) { return $candidate }
+    }
+    $found = Get-Command $Command -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { return $found.Source }
+    return $null
+}
+
+function Resolve-DependencyExecutables {
+    Refresh-EnvironmentPath
+    $script:PythonExe = Resolve-Executable 'python.exe' @(
+        (Join-Path $env:ProgramFiles 'Python311\python.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python311\python.exe')
+    )
+    $nodeRoot = Join-Path $env:ProgramFiles 'nodejs'
+    $script:NodeExe = Resolve-Executable 'node.exe' @((Join-Path $nodeRoot 'node.exe'))
+    $script:NpmExe = Resolve-Executable 'npm.cmd' @((Join-Path $nodeRoot 'npm.cmd'))
+}
+
+function Initialize-SystemProxy {
+    $proxy = [System.Net.WebRequest]::DefaultWebProxy
+    if (-not $proxy) { return }
+    $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
+    $probe = [Uri]'https://nodejs.org/'
+    if (-not $proxy.IsBypassed($probe)) {
+        $resolved = $proxy.GetProxy($probe)
+        if ($resolved -and $resolved.AbsoluteUri -ne $probe.AbsoluteUri) {
+            $script:ProxyUri = $resolved.AbsoluteUri
+            $env:HTTP_PROXY = $script:ProxyUri
+            $env:HTTPS_PROXY = $script:ProxyUri
+            $env:PIP_PROXY = $script:ProxyUri
+            $env:NPM_CONFIG_PROXY = $script:ProxyUri
+            $env:NPM_CONFIG_HTTPS_PROXY = $script:ProxyUri
+            Write-ComponentStatus '시스템 프록시' '확인됨' $resolved.Authority
+        }
+    }
+}
+
+function Invoke-SystemDownload([string]$Uri, [string]$OutFile = '') {
+    $params = @{ Uri = $Uri; UseBasicParsing = $true }
+    if ($OutFile) { $params.OutFile = $OutFile }
+    if ($script:ProxyUri) {
+        $params.Proxy = $script:ProxyUri
+        $params.ProxyUseDefaultCredentials = $true
+    }
+    Invoke-WebRequest @params
 }
 
 function Get-PythonVersionLine {
-    $cmd = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $null }
+    if (-not $script:PythonExe) { Resolve-DependencyExecutables }
+    if (-not $script:PythonExe) { return $null }
     try {
-        return (& python --version 2>&1 | Select-Object -First 1).ToString()
+        return (& $script:PythonExe --version 2>&1 | Select-Object -First 1).ToString()
     } catch {
         return $null
     }
@@ -182,10 +244,10 @@ function Get-PythonVersion {
 }
 
 function Install-Python311FromInstaller {
-    Write-Host "Downloading Python 3.11 installer..."
+    Write-ComponentStatus 'Python 3.11' '설치 중' 'python.org 설치 파일 다운로드'
     $installer = Join-Path $env:TEMP 'python-3.11-amd64.exe'
     $url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'
-    Invoke-WebRequest -Uri $url -OutFile $installer
+    Invoke-SystemDownload -Uri $url -OutFile $installer
 
     $process = Start-Process -FilePath $installer -ArgumentList '/quiet InstallAllUsers=1 PrependPath=1 Include_test=0' -Wait -PassThru
     if ($process.ExitCode -ne 0) {
@@ -196,36 +258,38 @@ function Install-Python311FromInstaller {
 function Install-Python311 {
     $version = Get-PythonVersion
     if ($version -and $version.Major -eq 3 -and $version.Minor -eq 11) {
-        Add-Summary "Python $version already available"
+        Write-ComponentStatus 'Python 3.11' '건너뜀' "이미 확인됨 ($version)"
+        Add-Summary "Python $version 확인됨"
         return
     }
 
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
-        Write-Host "Installing Python 3.11 using winget source..."
+        Write-ComponentStatus 'Python 3.11' '설치 중' 'winget 사용'
         & winget install -e --id Python.Python.3.11 --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
         if ($LASTEXITCODE -ne 0) {
-            Add-WarningLine "winget Python install failed with exit code $LASTEXITCODE. Falling back to the python.org installer."
+            Add-WarningLine "winget Python 설치 실패(종료 코드 $LASTEXITCODE). python.org 설치 파일로 다시 시도합니다."
             Install-Python311FromInstaller
         }
     } else {
-        Write-Host "winget is not available."
+        Write-ComponentStatus 'winget' '건너뜀' '사용할 수 없어 python.org 설치 파일을 사용합니다'
         Install-Python311FromInstaller
     }
 
-    Refresh-EnvironmentPath
+    Resolve-DependencyExecutables
     $version = Get-PythonVersion
     if (-not $version -or $version.Major -ne 3 -or $version.Minor -ne 11) {
         throw 'Python 3.11 install completed, but python --version is still not Python 3.11.'
     }
-    Add-Summary "Python $version installed"
+    Write-ComponentStatus 'Python 3.11' '설치 완료' $script:PythonExe
+    Add-Summary "Python $version 설치 완료"
 }
 
 function Get-NodeVersion {
-    $cmd = Get-Command node -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $null }
+    if (-not $script:NodeExe) { Resolve-DependencyExecutables }
+    if (-not $script:NodeExe) { return $null }
     try {
-        $line = (& node --version 2>&1 | Select-Object -First 1).ToString()
+        $line = (& $script:NodeExe --version 2>&1 | Select-Object -First 1).ToString()
         if ($line -match 'v(\d+)\.(\d+)\.(\d+)') {
             return [version]"$($Matches[1]).$($Matches[2]).$($Matches[3])"
         }
@@ -234,15 +298,15 @@ function Get-NodeVersion {
 }
 
 function Install-NodeFromOfficialMsi {
-    Write-Host "Downloading Node.js 22 LTS installer..."
+    Write-ComponentStatus 'Node.js 22 LTS' '설치 중' 'nodejs.org 설치 파일 다운로드 및 SHA256 검증'
     $baseUrl = 'https://nodejs.org/dist/latest-v22.x'
-    $sums = (Invoke-WebRequest -Uri "$baseUrl/SHASUMS256.txt").Content
+    $sums = (Invoke-SystemDownload -Uri "$baseUrl/SHASUMS256.txt").Content
     $match = [regex]::Match($sums, '(?m)^([0-9a-f]{64})\s+(node-v([0-9.]+)-x64\.msi)$')
     if (-not $match.Success) { throw 'Could not resolve the latest Node.js 22 x64 MSI.' }
     $fileName = $match.Groups[2].Value
     $expectedHash = $match.Groups[1].Value
     $installer = Join-Path $env:TEMP $fileName
-    Invoke-WebRequest -Uri "$baseUrl/$fileName" -OutFile $installer
+    Invoke-SystemDownload -Uri "$baseUrl/$fileName" -OutFile $installer
     $actualHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualHash -ne $expectedHash) { throw "Node.js installer checksum mismatch: $installer" }
     $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', "`"$installer`"", '/qn', '/norestart') -Wait -PassThru
@@ -251,36 +315,39 @@ function Install-NodeFromOfficialMsi {
 
 function Install-NodeLts {
     $version = Get-NodeVersion
-    if ($version -and $version.Major -ge 18 -and (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
-        Add-Summary "Node.js $version and npm already available"
+    if ($version -and $version.Major -ge 18 -and $script:NpmExe) {
+        Write-ComponentStatus 'Node.js/npm' '건너뜀' "이미 확인됨 ($version)"
+        Add-Summary "Node.js $version 및 npm 확인됨"
         return
     }
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
-        Write-Host "Installing Node.js LTS using winget..."
+        Write-ComponentStatus 'Node.js 22 LTS' '설치 중' 'winget 사용'
         & winget install -e --id OpenJS.NodeJS.LTS --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
         if ($LASTEXITCODE -ne 0) {
-            Add-WarningLine "winget Node.js install failed with exit code $LASTEXITCODE. Falling back to nodejs.org."
+            Add-WarningLine "winget Node.js 설치 실패(종료 코드 $LASTEXITCODE). nodejs.org 설치 파일로 다시 시도합니다."
             Install-NodeFromOfficialMsi
         }
     } else {
         Install-NodeFromOfficialMsi
     }
-    Refresh-EnvironmentPath
+    Resolve-DependencyExecutables
     $version = Get-NodeVersion
     if (-not $version -or $version.Major -lt 18) { throw 'Node.js 18 or newer is required.' }
-    if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw 'npm.cmd was not installed with Node.js.' }
-    Add-Summary "Node.js $version and npm installed"
+    if (-not $script:NpmExe) { throw 'Node.js 설치 후 npm.cmd를 찾을 수 없습니다.' }
+    Write-ComponentStatus 'Node.js/npm' '설치 완료' $script:NodeExe
+    Add-Summary "Node.js $version 및 npm 설치 완료"
 }
 
 function Install-ElectronDependencies {
     if (-not (Test-Path -LiteralPath (Join-Path $ElectronDir 'package-lock.json'))) {
         throw "Electron package-lock.json is missing: $ElectronDir"
     }
-    Write-Host "Installing/verifying Electron dependencies with npm ci..."
+    Write-ComponentStatus 'Electron' '설치 중' 'npm ci 실행'
     Push-Location $ElectronDir
     try {
-        & npm.cmd ci --include=dev --no-audit --no-fund
+        # Contract equivalent: npm.cmd ci --include=dev --no-audit --no-fund
+        & $script:NpmExe ci --include=dev --no-audit --no-fund
         if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
     } finally {
         Pop-Location
@@ -288,7 +355,8 @@ function Install-ElectronDependencies {
     if (-not (Test-Path -LiteralPath $ElectronExe -PathType Leaf)) {
         throw "Electron executable was not installed: $ElectronExe"
     }
-    Add-Summary "Electron npm dependencies installed and verified"
+    Write-ComponentStatus 'Electron' '설치 완료' $ElectronExe
+    Add-Summary "Electron npm 의존성 설치 및 확인 완료"
 }
 
 function Install-Files {
@@ -533,6 +601,8 @@ if ($ShortcutOnly) {
 }
 
 Ensure-Admin
+Initialize-SystemProxy
+Resolve-DependencyExecutables
 
 Write-Host "teams-record setup"
 Write-Host "RepoRoot: $RepoRoot"
@@ -545,7 +615,7 @@ if ($SkipDependencies) {
     $pythonVersion = Get-PythonVersion
     $nodeVersion = Get-NodeVersion
     if (-not $pythonVersion -or $pythonVersion.Major -ne 3 -or $pythonVersion.Minor -ne 11) { throw 'SkipDependencies requires Python 3.11.' }
-    if (-not $nodeVersion -or $nodeVersion.Major -lt 18 -or -not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw 'SkipDependencies requires Node.js 18+ and npm.' }
+    if (-not $nodeVersion -or $nodeVersion.Major -lt 18 -or -not $script:NpmExe) { throw 'SkipDependencies requires Node.js 18+ and npm.' }
     Add-Summary "dependency installation skipped; existing Python $pythonVersion and Node.js $nodeVersion verified"
 } else {
     Install-Python311

@@ -18,7 +18,8 @@ def test_root_installer_exists_and_uses_crlf():
     assert b"\n" not in data.replace(b"\r\n", b"")
     assert b"publish\\install.ps1" in data
     assert b"if not \"%INSTALL_EXIT%\"==\"0\"" in data
-    assert "Read-Host 'Press Enter to close this installer'" in INSTALL
+    assert "Teams Record 설치 완료" in INSTALL
+    assert "Teams Record 설치 실패" in INSTALL
 
 def test_whitelist_contains_runtime_and_excludes_forbidden_paths(tmp_path, monkeypatch):
     required = {"install.bat", "VERSION", "viewer/update-check.bat", "electron/assets/icon.ico"}

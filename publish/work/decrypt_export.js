@@ -29,7 +29,7 @@ function verify(){
       if(e){console.log('VERIFY_ERR '+e.message);return;}
       const tbls=rows.filter(r=>r.type==='table').map(r=>r.name);
       const views=rows.filter(r=>r.type==='view').map(r=>r.name);
-      console.log('PLAINTEXT_OPEN_OK(키없이열림)');
+      console.log('PLAINTEXT_OPEN_OK(opened-without-key)');
       console.log('TABLES('+tbls.length+': '+tbls.join(', '));
       if(views.length)console.log('VIEWS('+views.length+'): '+views.join(', '));
     });
