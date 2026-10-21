@@ -603,30 +603,139 @@ def start_knox(knox: Path) -> None:
     subprocess.Popen([exe], cwd=str(knox), creationflags=flags, close_fds=True)
 
 
+DIAG_KEEP = 10
+KEY_MASK_RE = re.compile(r"(PRAGMA\s+key\s*=\s*)([^\r\n]+)", re.I)
+
+
+def mask_keys(text: str) -> str:
+    """1.3.2: diagnostic logs never carry the DB key itself (everything after 'PRAGMA key =' on the line)."""
+    return KEY_MASK_RE.sub(lambda m: f"{m.group(1)}****({len(m.group(2))}자)", text or "")
+
+
+def _decode(data) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    for enc in ("utf-8", "oem", "mbcs", "cp949"):
+        try:
+            return data.decode(enc)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def _session_info() -> list:
+    lines = [f"user={os.environ.get('USERNAME') or os.environ.get('USER') or '?'} pid={os.getpid()} python={sys.version.split()[0]}"]
+    if os.name != "nt":
+        return lines
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        sid = wintypes.DWORD()
+        if ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sid)):
+            lines.append(f"session_id={sid.value}")
+
+        class STARTUPINFOW(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR), ("lpDesktop", wintypes.LPWSTR),
+                        ("lpTitle", wintypes.LPWSTR), ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
+                        ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD), ("dwXCountChars", wintypes.DWORD),
+                        ("dwYCountChars", wintypes.DWORD), ("dwFillAttribute", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                        ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD), ("lpReserved2", ctypes.c_void_p),
+                        ("hStdInput", wintypes.HANDLE), ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE)]
+        si = STARTUPINFOW()
+        si.cb = ctypes.sizeof(STARTUPINFOW)
+        ctypes.windll.kernel32.GetStartupInfoW(ctypes.byref(si))
+        lines.append(f"startupinfo desktop={si.lpDesktop!r} flags=0x{si.dwFlags:x} show_window={si.wShowWindow}")
+    except Exception as exc:  # diagnostics never fail the command
+        lines.append(f"session info failed: {exc}")
+    return lines
+
+
+def _knox_processes() -> str:
+    if os.name != "nt":
+        return "(not windows)"
+    try:
+        proc = subprocess.run(["tasklist", "/FI", "IMAGENAME eq KnoxTeams.exe", "/V", "/FO", "CSV", "/NH"],
+                              capture_output=True, timeout=20,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return (_decode(proc.stdout) or _decode(proc.stderr)).strip() or "(none)"
+    except Exception as exc:
+        return f"tasklist failed: {exc}"
+
+
+def write_diag(name: str, lines: list) -> Path | None:
+    """Keep the last DIAG_KEEP logs per command under logs/<name>-YYYYMMDD-HHMMSS.log (key values masked)."""
+    try:
+        LOGS.mkdir(parents=True, exist_ok=True)
+        path = LOGS / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        path.write_text(mask_keys("\n".join(lines)) + "\n", encoding="utf-8")
+        for old in sorted(LOGS.glob(f"{name}-*.log"))[:-DIAG_KEEP]:
+            with contextlib.suppress(OSError):
+                old.unlink()
+        return path
+    except OSError:
+        return None
+
+
+def recent_logs(name: str, last: int) -> dict:
+    files = sorted(LOGS.glob(f"{name}-*.log"))[-max(1, min(int(last), DIAG_KEEP)):] if LOGS.is_dir() else []
+    items = [{"file": f.name, "text": mask_keys(f.read_text(encoding="utf-8", errors="replace"))} for f in files]
+    return {"ok": True, "at": now_iso(), "error_code": EXIT_OK, "logs": items,
+            "message": f"{name} 진단 로그 {len(items)}건" if items else f"{name} 진단 로그가 없습니다."}
+
+
 def do_capture_key(timeout: float) -> dict:
     config = load_config()
     knox = find_knox_root(config)
     WORK.mkdir(parents=True, exist_ok=True)
     log_path = WORK / "key_spawn.log"
     killed = False
+    started = time.monotonic()
+    key_wait = os.environ.get("TEAMS_RECORD_KEY_WAIT") or "90"
+    diag = [f"=== capture-key {now_iso()} (teams-record-lite {read_version()}) ==="]
+    diag += _session_info()
+    diag.append(f"knox_root={knox} exe_exists={(knox / 'KnoxTeams.exe').exists()} timeout={timeout} key_wait={key_wait}s")
+    diag += ["--- Knox processes before ---", _knox_processes()]
+    ok = False
     try:
         log("stopping Knox Teams for key capture")
         killed = kill_knox()
+        diag.append(f"kill_knox -> {killed}")
         time.sleep(2)
         env = dict(os.environ, TEAMS_RECORD_WORK=str(WORK), KNOX_ROOT=str(knox), PYTHONUTF8="1")
+        out = err = b""
         try:
-            subprocess.run([runtime_python(), str(APP_DIR / "spawn_key.py")], env=env, cwd=str(WORK),
-                           timeout=max(timeout, 30), capture_output=True,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except subprocess.TimeoutExpired:
+            proc = subprocess.run([runtime_python(), str(APP_DIR / "spawn_key.py")], env=env, cwd=str(WORK),
+                                  timeout=max(timeout, 30), capture_output=True,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            out, err = proc.stdout, proc.stderr
+            diag.append(f"spawn_key exit={proc.returncode} after {time.monotonic() - started:.1f}s")
+        except subprocess.TimeoutExpired as exc:
+            diag.append(f"spawn_key TIMEOUT after {time.monotonic() - started:.1f}s")
+            out, err = exc.stdout, exc.stderr
             raise LiteError(EXIT_TIMEOUT, "키 캡처가 시간 안에 끝나지 않았습니다.")
+        finally:
+            text_out, text_err = _decode(out).strip(), _decode(err).strip()
+            if text_out or text_err:
+                diag += ["--- spawn_key stdout ---", text_out[-4000:], "--- spawn_key stderr ---", text_err[-4000:]]
+            spawned = log_path.read_text(encoding="utf-8", errors="ignore") if log_path.exists() else ""
+            diag += ["--- key_spawn.log ---", spawned.strip() or "(empty)"]
+            diag += ["--- Knox processes after wait ---", _knox_processes()]
         text = log_path.read_text(encoding="utf-8", errors="ignore") if log_path.exists() else ""
         found = KEY_RE.findall(text)
         if not found:
-            raise LiteError(EXIT_NO_KEY, "DB 키를 캡처하지 못했습니다. Knox Teams 로그인 상태를 확인해 주세요.",
-                            text[-1500:])
+            diag.append("result: no PRAGMA key seen")
+            raise LiteError(EXIT_NO_KEY, "DB 키를 캡처하지 못했습니다. Knox Teams 로그인 상태를 확인해 주세요.", "")
         KEY_PATH.write_text(found[-1], encoding="utf-8")
         remember_key(found[-1], "capture")
+        diag.append("result: key captured")
+        ok = True
+    except LiteError as exc:
+        path = write_diag("capture-key", diag)
+        exc.detail = (f"진단 로그: {path}\n" if path else "") + mask_keys("\n".join(diag))[-12000:]
+        raise
     finally:
         # the spawned instance is attached to frida; restart a clean one either way
         kill_knox()
@@ -634,8 +743,10 @@ def do_capture_key(timeout: float) -> dict:
         start_knox(knox)
         with contextlib.suppress(OSError):
             log_path.unlink()
+    path = write_diag("capture-key", diag) if ok else None
     return {"ok": True, "at": now_iso(), "key_path": str(KEY_PATH), "knox_restarted": os.name == "nt",
-            "knox_was_running": killed, "error_code": EXIT_OK, "message": "DB 키를 캡처했습니다."}
+            "knox_was_running": killed, "error_code": EXIT_OK, "message": "DB 키를 캡처했습니다.",
+            "log_path": str(path) if path else None}
 
 
 # --------------------------------------------------------------------- main
@@ -665,6 +776,9 @@ def main(argv=None) -> int:
     p.add_argument("--rollback", action="store_true", help="restore the previous version on next run")
     p = sub.add_parser("capture-key", help="restart Knox Teams and capture the DB key")
     p.add_argument("--timeout", type=float, default=180)
+    p = sub.add_parser("logs", help="print recent diagnostic logs (key values masked)")
+    p.add_argument("--name", default="capture-key")
+    p.add_argument("--last", type=int, default=1)
     args = parser.parse_args(argv)
 
     with contextlib.suppress(Exception):
@@ -690,6 +804,9 @@ def main(argv=None) -> int:
             return EXIT_OK
         if args.command == "capture-key":
             emit(do_capture_key(args.timeout))
+            return EXIT_OK
+        if args.command == "logs":
+            emit(recent_logs(re.sub(r"[^a-z0-9-]", "", args.name.lower()) or "capture-key", args.last))
             return EXIT_OK
         if args.command == "refresh":
             try:

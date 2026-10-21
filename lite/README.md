@@ -30,6 +30,7 @@ Knox Teams 메신저의 로컬 대화 DB 를 읽어 누적 보관용 SQLite 아�
 | `update` / `update --check` | 새 버전 내려받기 / 확인만 |
 | `update --rollback` | 다음 실행 시 이전 버전으로 되돌리기 |
 | `capture-key` | Knox Teams 를 재시작하며 DB 키 다시 캡처 (로그인 계정이 바뀐 경우 등) |
+| `logs [--name capture-key] [--last N]` | 최근 진단 로그 출력 (1.3.2, `logs\` 폴더의 `capture-key-*.log`, DB 키 값은 가림) |
 | `version` | 버전 출력 |
 
 결과는 모두 JSON 으로 출력됩니다. 자세한 형식은 `AGENT.md` 를 참고하세요.

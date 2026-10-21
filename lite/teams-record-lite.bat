@@ -1,5 +1,5 @@
 @echo off
-REM teams-record-lite CLI launcher. Usage: teams-record-lite.bat refresh ^| status ^| update [--check] ^| capture-key ^| version
+REM teams-record-lite CLI launcher. Usage: teams-record-lite.bat refresh ^| status ^| update [--check] ^| capture-key ^| logs ^| version
 setlocal
 set "ROOT=%~dp0"
 set "PY=%ROOT%runtime\python\python.exe"

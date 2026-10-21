@@ -75,3 +75,34 @@ def test_all_keys_fail_keeps_original_and_says_so(trlite, monkeypatch, tmp_path)
         trlite.do_refresh(300)
     assert e.value.code == trlite.EXIT_REFRESH_FAILED and "2개" in e.value.message
     assert trlite.KEY_PATH.read_text(encoding="utf-8") == "x'cur'"
+
+
+def test_capture_key_failure_writes_masked_diagnostic_log(trlite, monkeypatch, tmp_path):
+    """1.3.2: a failed capture keeps a diagnostic log (spawn output, Knox processes) and returns it in detail."""
+    knox = tmp_path / "knox"; knox.mkdir(); (knox / "KnoxTeams.exe").write_text("")
+    monkeypatch.setattr(trlite, "find_knox_root", lambda config: knox)
+    monkeypatch.setattr(trlite, "kill_knox", lambda: True)
+    monkeypatch.setattr(trlite, "start_knox", lambda k: None)
+    monkeypatch.setattr(trlite.time, "sleep", lambda s: None)
+
+    class Done:
+        returncode, stdout, stderr = 0, b"", b"warn: something"
+
+    def fake_run(cmd, **kw):
+        (trlite.WORK / "key_spawn.log").write_text("spawned pid 42\n[pragma] PRAGMA cipher='x'\n[win] 0 windows\n", encoding="utf-8")
+        return Done()
+
+    monkeypatch.setattr(trlite.subprocess, "run", fake_run)
+    with pytest.raises(trlite.LiteError) as err:
+        trlite.do_capture_key(30)
+    assert err.value.code == trlite.EXIT_NO_KEY
+    assert "spawned pid 42" in err.value.detail and "warn: something" in err.value.detail
+    logs = trlite.recent_logs("capture-key", 1)
+    assert len(logs["logs"]) == 1 and "result: no PRAGMA key seen" in logs["logs"][0]["text"]
+
+
+def test_diagnostic_logs_mask_db_keys(trlite):
+    assert trlite.mask_keys("PRAGMA key = 'x''abcdef'") .count("abcdef") == 0
+    path = trlite.write_diag("capture-key", ["[KEY] PRAGMA key='secretvalue1'"])
+    assert "secretvalue1" not in path.read_text(encoding="utf-8")
+    assert "****" in trlite.recent_logs("capture-key", 5)["logs"][-1]["text"]

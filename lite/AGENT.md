@@ -27,6 +27,7 @@
 | `version` | | 버전 |
 | `update` | `--check`, `--rollback` | 새 버전 확인·내려받기(다음 실행부터 적용) |
 | `capture-key` | `--timeout 120` | Knox Teams 재시작 + DB 키 캡처 (사용자 동의 후에만) |
+| `logs` | `--name capture-key`, `--last 1` | 최근 진단 로그(키 값 가림). capture-key 가 실패하면 `detail` 에도 진단 로그가 들어 있다 |
 
 ## 종료 코드
 

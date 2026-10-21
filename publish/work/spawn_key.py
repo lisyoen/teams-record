@@ -1,4 +1,8 @@
-import frida, os, time
+import os, sys, time, threading
+try:
+    import frida
+except Exception as e:  # 1.3.2: report a broken runtime instead of failing silently
+    sys.stderr.write('frida import failed: %r\n' % (e,)); raise
 
 WORK = os.environ.get('TEAMS_RECORD_WORK') or os.path.join(os.path.expanduser('~'), 'teams-record-work')
 LOG = os.path.join(WORK, 'key_spawn.log')
@@ -40,7 +44,48 @@ JS = r"""
 })();
 """
 
+# 1.3.2: watch the spawned Knox Teams windows. When this script runs under a hidden agent (Skipper Mate),
+# the spawned window can start hidden, so the user signs in to nothing and the key never appears.
+# Log what windows exist and show a titled main window that stays hidden.
+def watch_windows(pid, stop):
+    if os.name != 'nt':
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    except Exception as e:
+        log('[win] watcher unavailable %r' % (e,)); return
+    show_hidden = (os.environ.get('TEAMS_RECORD_SHOW_HIDDEN') or '1') != '0'
+    shown, last, started = set(), None, time.time()
+    while not stop.is_set():
+        wins = []
+        def cb(h, _):
+            p = wintypes.DWORD(); user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+            if p.value == pid:
+                cls = ctypes.create_unicode_buffer(128); user32.GetClassNameW(h, cls, 128)
+                n = user32.GetWindowTextLengthW(h); title = ctypes.create_unicode_buffer(n + 1); user32.GetWindowTextW(h, title, n + 1)
+                wins.append((int(h or 0), cls.value, title.value, bool(user32.IsWindowVisible(h))))
+            return True
+        try:
+            user32.EnumWindows(EnumProc(cb), 0)
+        except Exception as e:
+            log('[win] enum failed %r' % (e,)); return
+        titled = [w for w in wins if w[2]]
+        snap = tuple((w[1], w[2], w[3]) for w in titled)
+        if snap != last:
+            log('[win] %s %d windows, titled: %s' % (time.strftime('%H:%M:%S'), len(wins), '; '.join('%s "%s" %s' % (c, t[:40], 'visible' if v else 'hidden') for c, t, v in snap) or '-'))
+            last = snap
+        if show_hidden and time.time() - started > 8 and not any(w[3] for w in titled):
+            for h, c, t, v in titled:
+                if c.startswith('Chrome_WidgetWin') and h not in shown:
+                    user32.ShowWindow(h, 1); user32.SetForegroundWindow(h); shown.add(h)
+                    log('[win] showed hidden window "%s"' % t[:40])
+        stop.wait(2)
+
 open(LOG,'w').close()
+log('session %s pid=%d' % (os.environ.get('USERNAME', '?'), os.getpid()))
 try:
     pid = frida.spawn([EXE])
     log('spawned pid %d %s' % (pid, time.strftime('%H:%M:%S')))
@@ -58,11 +103,13 @@ try:
     sc.load()
     frida.resume(pid)
     log('resumed %s' % time.strftime('%H:%M:%S'))
+    stop = threading.Event(); threading.Thread(target=watch_windows, args=(pid, stop), daemon=True).start()
     for _ in range(int(os.environ.get('TEAMS_RECORD_KEY_WAIT') or 90)):   # 1.3.1: 45 s was too short when sign-in is slow
         time.sleep(1)
         if got['key']:
             log('=== KEY captured, stop early %s ===' % time.strftime('%H:%M:%S'))
             break
+    stop.set()
     log('=== done %s key=%s ===' % (time.strftime('%H:%M:%S'), got['key']))
     try: s.detach()
     except: pass
