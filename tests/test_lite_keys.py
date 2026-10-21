@@ -85,20 +85,27 @@ def test_capture_key_failure_writes_masked_diagnostic_log(trlite, monkeypatch, t
     monkeypatch.setattr(trlite, "start_knox", lambda k: None)
     monkeypatch.setattr(trlite.time, "sleep", lambda s: None)
 
-    class Done:
-        returncode, stdout, stderr = 0, b"", b"warn: something"
+    seen = {}
 
-    def fake_run(cmd, **kw):
-        (trlite.WORK / "key_spawn.log").write_text("spawned pid 42\n[pragma] PRAGMA cipher='x'\n[win] 0 windows\n", encoding="utf-8")
-        return Done()
+    class FakeProc:
+        pid = 1
+        def __init__(self, cmd, **kw):
+            seen.update(kw)
+            kw["stdout"].write(b"warn: something")
+            (trlite.WORK / "key_spawn.log").write_text("spawned pid 42\n[pragma] PRAGMA cipher='x'\n[win] 0 windows\n", encoding="utf-8")
+        def wait(self, timeout=None): return 0
 
-    monkeypatch.setattr(trlite.subprocess, "run", fake_run)
+    monkeypatch.setattr(trlite.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(trlite, "knox_running", lambda: True)
     with pytest.raises(trlite.LiteError) as err:
         trlite.do_capture_key(30)
     assert err.value.code == trlite.EXIT_NO_KEY
     assert "spawned pid 42" in err.value.detail and "warn: something" in err.value.detail
     logs = trlite.recent_logs("capture-key", 1)
     assert len(logs["logs"]) == 1 and "result: no PRAGMA key seen" in logs["logs"][0]["text"]
+    # 1.3.3: no pipes for spawn_key (Knox Teams inherits them and the wait never ends)
+    assert seen["stdout"] is not trlite.subprocess.PIPE and seen["stderr"] is trlite.subprocess.STDOUT
+    assert seen["env"]["TEAMS_RECORD_KEY_MODE"] == "attach" and int(seen["env"]["TEAMS_RECORD_KEY_WAIT"]) <= 120
 
 
 def test_diagnostic_logs_mask_db_keys(trlite):
@@ -106,3 +113,29 @@ def test_diagnostic_logs_mask_db_keys(trlite):
     path = trlite.write_diag("capture-key", ["[KEY] PRAGMA key='secretvalue1'"])
     assert "secretvalue1" not in path.read_text(encoding="utf-8")
     assert "****" in trlite.recent_logs("capture-key", 5)["logs"][-1]["text"]
+
+
+
+def test_capture_mode_alternates_after_failure(trlite):
+    assert trlite.capture_mode() == "attach"
+    trlite.update_state(last_capture_mode="attach", last_capture_ok=False)
+    assert trlite.capture_mode() == "spawn"
+    trlite.update_state(last_capture_mode="spawn", last_capture_ok=False)
+    assert trlite.capture_mode() == "attach"
+    trlite.update_state(last_capture_mode="spawn", last_capture_ok=True)
+    assert trlite.capture_mode() == "spawn"
+
+
+def test_captured_key_is_shared_with_viewer(trlite):
+    trlite.LEGACY_KEY.parent.mkdir(parents=True, exist_ok=True)
+    trlite.LEGACY_KEY.write_text("x'old'", encoding="utf-8")
+    trlite.share_key_with_viewer("x'new'")
+    assert trlite.LEGACY_KEY.read_text(encoding="utf-8") == "x'new'"
+
+
+def test_status_reports_needs_key(trlite):
+    trlite.update_state(last_refresh_needs_key=True)
+    assert trlite.do_status()["needs_key"] is True
+    trlite.WORK.mkdir(parents=True, exist_ok=True); trlite.KEY_PATH.write_text("x'k'", encoding="utf-8")
+    trlite.update_state(last_refresh_needs_key=False)
+    assert trlite.do_status()["needs_key"] is False

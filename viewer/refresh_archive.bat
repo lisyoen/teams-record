@@ -30,6 +30,9 @@ if not defined LIVE (
 
 echo [1/3] snapshot live DB (+wal +shm)...
 if not exist "%WORK%" mkdir "%WORK%"
+REM 1.3.3: Teams Record Lite (e.g. installed by Skipper) may have captured a newer key; follow it.
+set "LITEKEY=%LOCALAPPDATA%\teams-record-lite\work\dbkey.secret"
+if exist "%LITEKEY%" powershell -NoProfile -ExecutionPolicy Bypass -Command "$a=Get-Item -LiteralPath $env:LITEKEY; $b=Join-Path $env:WORK 'dbkey.secret'; if(-not (Test-Path -LiteralPath $b) -or $a.LastWriteTime -gt (Get-Item -LiteralPath $b).LastWriteTime){Copy-Item -LiteralPath $a.FullName -Destination $b -Force}" >nul 2>&1
 if not exist "%WORK%\dbkey.secret" (
   echo   ERROR: dbkey.secret is missing.
   echo   Run publish\capture-key.bat once after Knox Teams login, then open Teams Viewer again.

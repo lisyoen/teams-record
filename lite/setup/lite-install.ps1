@@ -195,6 +195,15 @@ function Initialize-Config {
     } else {
         Write-Host '[건너뜀] 기존 설정 파일 보존'
     }
+    if (-not $ArchivePath) {
+        # 1.3.3: a Teams Viewer installed on its own keeps working next to the CLI — share its archive (and key)
+        $marker = Join-Path $env:USERPROFILE 'teams-record-work\install-root.txt'
+        if (Test-Path -LiteralPath $marker -PathType Leaf) {
+            $viewerRoot = (Get-Content -LiteralPath $marker -Raw).Trim()
+            $viewerArchive = if ($viewerRoot) { Join-Path $viewerRoot 'teams-archive.db' } else { '' }
+            if ($viewerArchive -and (Test-Path -LiteralPath $viewerArchive -PathType Leaf)) { $ArchivePath = $viewerArchive }
+        }
+    }
     if ($ArchivePath) {
         $cfg = [ordered]@{}
         (Get-Content -LiteralPath $config -Raw -Encoding utf8 | ConvertFrom-Json).psobject.Properties | ForEach-Object { $cfg[$_.Name] = $_.Value }

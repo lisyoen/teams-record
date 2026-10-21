@@ -73,3 +73,12 @@ Knox Teams 메신저의 로컬 대화 DB 를 읽어 누적 보관용 SQLite 아�
 | `work\dbkey.secret` | Knox Teams DB 키 (외부 반출 금지) |
 | `%LOCALAPPDATA%\teams-record-keys\keys.json` | 캡처한 DB 키 보관함 (1.3.1, Windows DPAPI 로 현재 사용자만 복호화, 최근 10개). 업데이트·재설치해도 남아 다시 캡처하지 않아도 됩니다 |
 | `logs\` | 설치·갱신·업데이트 로그 |
+
+## Teams Viewer 와 함께 쓰기 (1.3.3)
+
+단독으로 설치한 Teams Viewer 가 있는 PC 에 CLI 를 따로 설치해도(예: Skipper) 둘 다 동작합니다. CLI 는 Viewer 의 대화 아카이브를 함께 쓰고, 키를 캡처하면 Viewer 의 키도 같이 갱신합니다. Viewer 갱신은 CLI 가 캡처한 더 새 키를 따라갑니다.
+
+## DB 키 캡처 방식 (1.3.3)
+
+기본은 Knox Teams 를 평소처럼(창이 보이게) 실행한 뒤 바로 연결해 키를 읽습니다(`attach`). 실패하면 다음 캡처는 Knox Teams 를 캡처 도구 아래에서 시작하는 방식(`spawn`)으로 바꿔 시도합니다. `config.json` 의 `key_capture_mode` 로 고정할 수 있습니다. 캡처 전체는 기본 150초 안에 끝납니다.
+

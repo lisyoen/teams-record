@@ -86,9 +86,34 @@ def watch_windows(pid, stop):
 
 open(LOG,'w').close()
 log('session %s pid=%d' % (os.environ.get('USERNAME', '?'), os.getpid()))
+MODE = (os.environ.get('TEAMS_RECORD_KEY_MODE') or 'spawn').lower()
+
+
+def start_and_find_main():
+    """1.3.3 attach mode: start Knox Teams the normal way (Explorer -> visible window, usual sign-in) and find its
+    main process quickly, before it opens the message DB (that happens after sign-in)."""
+    import subprocess
+    dev = frida.get_local_device()
+    before = {p.pid for p in dev.enumerate_processes() if p.name.lower() == 'knoxteams.exe'}
+    subprocess.Popen(['explorer.exe', EXE], close_fds=True)
+    t0 = time.time()
+    while time.time() - t0 < 30:
+        procs = [p for p in dev.enumerate_processes(scope='full') if p.name.lower() == 'knoxteams.exe' and p.pid not in before]
+        if procs:
+            pids = {p.pid for p in procs}
+            main = [p for p in procs if (p.parameters or {}).get('ppid') not in pids]
+            return (main or procs)[0].pid, time.time() - t0
+        time.sleep(0.1)
+    raise RuntimeError('Knox Teams did not start within 30 s')
+
+
 try:
-    pid = frida.spawn([EXE])
-    log('spawned pid %d %s' % (pid, time.strftime('%H:%M:%S')))
+    if MODE == 'attach':
+        pid, took = start_and_find_main()
+        log('started via explorer, main pid %d found after %.1fs %s' % (pid, took, time.strftime('%H:%M:%S')))
+    else:
+        pid = frida.spawn([EXE])
+        log('spawned pid %d %s' % (pid, time.strftime('%H:%M:%S')))
     s = frida.attach(pid)
     sc = s.create_script(JS)
     got = {'key': False}
@@ -101,10 +126,13 @@ try:
             log('[frida] '+str(m))
     sc.on('message', on_msg)
     sc.load()
-    frida.resume(pid)
-    log('resumed %s' % time.strftime('%H:%M:%S'))
+    if MODE == 'attach':
+        log('attached %s' % time.strftime('%H:%M:%S'))
+    else:
+        frida.resume(pid)
+        log('resumed %s' % time.strftime('%H:%M:%S'))
     stop = threading.Event(); threading.Thread(target=watch_windows, args=(pid, stop), daemon=True).start()
-    for _ in range(int(os.environ.get('TEAMS_RECORD_KEY_WAIT') or 90)):   # 1.3.1: 45 s was too short when sign-in is slow
+    for _ in range(int(float(os.environ.get('TEAMS_RECORD_KEY_WAIT') or 90))):   # 1.3.1: 45 s was too short when sign-in is slow
         time.sleep(1)
         if got['key']:
             log('=== KEY captured, stop early %s ===' % time.strftime('%H:%M:%S'))

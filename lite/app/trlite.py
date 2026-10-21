@@ -423,7 +423,7 @@ def do_refresh(timeout: float) -> dict:
             shutil.rmtree(out_dir, ignore_errors=True)
 
     at = now_iso()
-    update_state(last_refresh=at, last_refresh_ok=True)
+    update_state(last_refresh=at, last_refresh_ok=True, last_refresh_error_code=None, last_refresh_needs_key=False)
     return {
         "ok": True,
         "at": at,
@@ -477,6 +477,9 @@ def do_status() -> dict:
         "install_root": str(ROOT),
         "knox_root": knox,
         "key_present": KEY_PATH.is_file(),
+        "last_refresh_ok": state.get("last_refresh_ok"),
+        "last_refresh_error_code": state.get("last_refresh_error_code"),
+        "needs_key": (not KEY_PATH.is_file() and not known_keys()) or bool(state.get("last_refresh_needs_key")),
         "archive": archive_summary(),
         "last_refresh": state.get("last_refresh"),
         "last_update_check": state.get("last_update_check"),
@@ -686,6 +689,51 @@ def recent_logs(name: str, last: int) -> dict:
             "message": f"{name} 진단 로그 {len(items)}건" if items else f"{name} 진단 로그가 없습니다."}
 
 
+def capture_mode() -> str:
+    """1.3.3: 'attach' starts Knox Teams normally (Explorer, visible window) and attaches right away; 'spawn' starts
+    it under frida. When the last capture failed, the next one uses the other way. TEAMS_RECORD_KEY_MODE forces one."""
+    forced = (os.environ.get("TEAMS_RECORD_KEY_MODE") or str(load_config().get("key_capture_mode") or "")).strip().lower()
+    if forced in ("attach", "spawn"):
+        return forced
+    state = load_state()
+    last = state.get("last_capture_mode")
+    if last in ("attach", "spawn") and state.get("last_capture_ok") is False:
+        return "spawn" if last == "attach" else "attach"
+    return last if last in ("attach", "spawn") else "attach"
+
+
+def knox_running() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        proc = subprocess.run(["tasklist", "/FI", "IMAGENAME eq KnoxTeams.exe", "/NH"], capture_output=True, timeout=20,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return b"KnoxTeams.exe" in (proc.stdout or b"")
+    except Exception:
+        return False
+
+
+def kill_tree(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    else:
+        with contextlib.suppress(OSError):
+            os.kill(pid, 9)
+
+
+def share_key_with_viewer(key: str) -> None:
+    """1.3.3: Teams Viewer (installed on its own) reads %USERPROFILE%\\teams-record-work\\dbkey.secret.
+    Keep it in step so a capture from either side works for both."""
+    try:
+        if LEGACY_KEY.parent.is_dir():
+            if not LEGACY_KEY.is_file() or LEGACY_KEY.read_text(encoding="utf-8").strip() != key.strip():
+                LEGACY_KEY.write_text(key.strip(), encoding="utf-8")
+                log("shared the captured key with Teams Viewer")
+    except OSError as exc:
+        log(f"could not share the key with Teams Viewer: {exc}")
+
+
 def do_capture_key(timeout: float) -> dict:
     config = load_config()
     knox = find_knox_root(config)
@@ -693,10 +741,12 @@ def do_capture_key(timeout: float) -> dict:
     log_path = WORK / "key_spawn.log"
     killed = False
     started = time.monotonic()
-    key_wait = os.environ.get("TEAMS_RECORD_KEY_WAIT") or "90"
+    # 1.3.3: the whole capture must finish well inside the caller's limit (Skipper Mate stops a command at 300 s)
+    key_wait = os.environ.get("TEAMS_RECORD_KEY_WAIT") or str(int(max(30, min(120, timeout - 30))))
+    mode = capture_mode()
     diag = [f"=== capture-key {now_iso()} (teams-record-lite {read_version()}) ==="]
     diag += _session_info()
-    diag.append(f"knox_root={knox} exe_exists={(knox / 'KnoxTeams.exe').exists()} timeout={timeout} key_wait={key_wait}s")
+    diag.append(f"knox_root={knox} exe_exists={(knox / 'KnoxTeams.exe').exists()} timeout={timeout} key_wait={key_wait}s mode={mode}")
     diag += ["--- Knox processes before ---", _knox_processes()]
     ok = False
     try:
@@ -704,22 +754,27 @@ def do_capture_key(timeout: float) -> dict:
         killed = kill_knox()
         diag.append(f"kill_knox -> {killed}")
         time.sleep(2)
-        env = dict(os.environ, TEAMS_RECORD_WORK=str(WORK), KNOX_ROOT=str(knox), PYTHONUTF8="1")
-        out = err = b""
+        env = dict(os.environ, TEAMS_RECORD_WORK=str(WORK), KNOX_ROOT=str(knox), PYTHONUTF8="1",
+                   TEAMS_RECORD_KEY_WAIT=key_wait, TEAMS_RECORD_KEY_MODE=mode)
+        # 1.3.3: never give spawn_key pipes. Knox Teams inherits the child's handles, so a pipe stays open for as
+        # long as Knox runs and waiting on it hung capture-key past the caller's limit. Output goes to a file.
+        out_path = WORK / "spawn_key.out"
         try:
-            proc = subprocess.run([runtime_python(), str(APP_DIR / "spawn_key.py")], env=env, cwd=str(WORK),
-                                  timeout=max(timeout, 30), capture_output=True,
-                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            out, err = proc.stdout, proc.stderr
-            diag.append(f"spawn_key exit={proc.returncode} after {time.monotonic() - started:.1f}s")
-        except subprocess.TimeoutExpired as exc:
-            diag.append(f"spawn_key TIMEOUT after {time.monotonic() - started:.1f}s")
-            out, err = exc.stdout, exc.stderr
-            raise LiteError(EXIT_TIMEOUT, "키 캡처가 시간 안에 끝나지 않았습니다.")
+            with open(out_path, "wb") as out_file:
+                proc = subprocess.Popen([runtime_python(), str(APP_DIR / "spawn_key.py")], env=env, cwd=str(WORK),
+                                        stdout=out_file, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                try:
+                    code = proc.wait(timeout=float(key_wait) + 25)
+                    diag.append(f"spawn_key exit={code} after {time.monotonic() - started:.1f}s")
+                except subprocess.TimeoutExpired:
+                    diag.append(f"spawn_key TIMEOUT after {time.monotonic() - started:.1f}s")
+                    kill_tree(proc.pid)
+                    raise LiteError(EXIT_TIMEOUT, "키 캡처가 시간 안에 끝나지 않았습니다.")
         finally:
-            text_out, text_err = _decode(out).strip(), _decode(err).strip()
-            if text_out or text_err:
-                diag += ["--- spawn_key stdout ---", text_out[-4000:], "--- spawn_key stderr ---", text_err[-4000:]]
+            text_out = _decode(out_path.read_bytes()).strip() if out_path.exists() else ""
+            if text_out:
+                diag += ["--- spawn_key output ---", text_out[-4000:]]
             spawned = log_path.read_text(encoding="utf-8", errors="ignore") if log_path.exists() else ""
             diag += ["--- key_spawn.log ---", spawned.strip() or "(empty)"]
             diag += ["--- Knox processes after wait ---", _knox_processes()]
@@ -730,17 +785,23 @@ def do_capture_key(timeout: float) -> dict:
             raise LiteError(EXIT_NO_KEY, "DB 키를 캡처하지 못했습니다. Knox Teams 로그인 상태를 확인해 주세요.", "")
         KEY_PATH.write_text(found[-1], encoding="utf-8")
         remember_key(found[-1], "capture")
+        share_key_with_viewer(found[-1])
+        update_state(last_capture_mode=mode, last_capture_ok=True, last_refresh_needs_key=False)
         diag.append("result: key captured")
         ok = True
     except LiteError as exc:
+        update_state(last_capture_mode=mode, last_capture_ok=False)
         path = write_diag("capture-key", diag)
         exc.detail = (f"진단 로그: {path}\n" if path else "") + mask_keys("\n".join(diag))[-12000:]
         raise
     finally:
-        # the spawned instance is attached to frida; restart a clean one either way
-        kill_knox()
-        time.sleep(1)
-        start_knox(knox)
+        # spawn mode: that instance ran under frida, so restart a clean one either way.
+        # attach mode (1.3.3): Knox Teams was started normally and frida has detached — leave the user's window alone,
+        # unless it is not running at all.
+        if mode == "spawn" or not knox_running():
+            kill_knox()
+            time.sleep(1)
+            start_knox(knox)
         with contextlib.suppress(OSError):
             log_path.unlink()
     path = write_diag("capture-key", diag) if ok else None
@@ -775,7 +836,7 @@ def main(argv=None) -> int:
     p.add_argument("--check", action="store_true", help="only check, do not download")
     p.add_argument("--rollback", action="store_true", help="restore the previous version on next run")
     p = sub.add_parser("capture-key", help="restart Knox Teams and capture the DB key")
-    p.add_argument("--timeout", type=float, default=180)
+    p.add_argument("--timeout", type=float, default=150)
     p = sub.add_parser("logs", help="print recent diagnostic logs (key values masked)")
     p.add_argument("--name", default="capture-key")
     p.add_argument("--last", type=int, default=1)
@@ -812,7 +873,8 @@ def main(argv=None) -> int:
             try:
                 result = do_refresh(args.timeout)
             except LiteError as err:
-                update_state(last_refresh_ok=False)
+                update_state(last_refresh_ok=False, last_refresh_error_code=err.code,
+                             last_refresh_needs_key=err.code == EXIT_NO_KEY or "복호화" in err.message)
                 append_log("refresh.log", f"FAILED code={err.code} {err.message}")
                 raise
             if not args.no_update:
