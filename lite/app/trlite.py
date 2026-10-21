@@ -43,6 +43,10 @@ STATE_PATH = ROOT / "state.json"
 ARCHIVE = DATA / "teams-archive.db"
 KEY_PATH = WORK / "dbkey.secret"
 LEGACY_KEY = Path(os.path.expanduser("~")) / "teams-record-work" / "dbkey.secret"
+# 1.3.0: every captured key is kept outside the install folder (survives updates and reinstalls),
+# protected with Windows DPAPI for the current user. Refresh tries these before asking for a new capture.
+KEYSTORE = Path(os.environ.get("TRLITE_KEYSTORE") or Path(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")) / "teams-record-keys" / "keys.json")
+KEYSTORE_MAX = 10
 
 DEFAULT_UPDATE_URL = (
     "https://github.com/lisyoen/teams-record/releases/latest/download/"
@@ -205,6 +209,78 @@ def runtime_python() -> str:
     return str(exe) if exe.is_file() else sys.executable
 
 
+# ------------------------------------------------------------------ key store
+def _dpapi(data: bytes, protect: bool) -> bytes:
+    if os.name != "nt":
+        return data
+    import ctypes
+    from ctypes import wintypes
+
+    class BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+    buf = ctypes.create_string_buffer(data, len(data))
+    src, dst = BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), BLOB()
+    fn = ctypes.windll.crypt32.CryptProtectData if protect else ctypes.windll.crypt32.CryptUnprotectData
+    ok = fn(ctypes.byref(src), None, None, None, None, 0x1, ctypes.byref(dst))   # CRYPTPROTECT_UI_FORBIDDEN
+    if not ok:
+        raise OSError("DPAPI failed")
+    try:
+        return ctypes.string_at(dst.pbData, dst.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(dst.pbData)
+
+
+def _load_keystore() -> list[dict]:
+    try:
+        return [x for x in json.loads(KEYSTORE.read_text(encoding="utf-8")).get("keys", []) if isinstance(x, dict) and x.get("data")]
+    except (OSError, ValueError):
+        return []
+
+
+def _known_entries() -> list[tuple[str, dict]]:
+    import base64
+    out, seen = [], set()
+    for item in _load_keystore():
+        try:
+            key = _dpapi(base64.b64decode(item["data"]), protect=False).decode("utf-8").strip()
+        except (OSError, ValueError, UnicodeDecodeError):
+            continue
+        if key and key not in seen:
+            seen.add(key); out.append((key, item))
+    return out
+
+
+def known_keys() -> list[str]:
+    """Captured keys, newest first."""
+    return [k for k, _ in _known_entries()]
+
+
+def remember_key(key: str, source: str) -> None:
+    """Put key first in the store (dedup, newest first, at most KEYSTORE_MAX)."""
+    import base64
+    key = key.strip()
+    if not key:
+        return
+    stamp = now_iso()
+    entries = [{"key": key, "saved_at": stamp, "source": source}]
+    for k, item in _known_entries():
+        if k != key and len(entries) < KEYSTORE_MAX:
+            entries.append({"key": k, "saved_at": item.get("saved_at", stamp), "source": item.get("source", "")})
+    out = [{"data": base64.b64encode(_dpapi(e["key"].encode("utf-8"), protect=True)).decode(),
+            "saved_at": e["saved_at"], "source": e["source"]} for e in entries]
+    KEYSTORE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = KEYSTORE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"version": 1, "keys": out}, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(KEYSTORE)
+
+
+def current_key() -> str:
+    try:
+        return KEY_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def ensure_key() -> None:
     have = KEY_PATH.is_file() and KEY_PATH.read_text(encoding="utf-8").strip()
     if LEGACY_KEY.is_file() and (not have or LEGACY_KEY.stat().st_mtime > KEY_PATH.stat().st_mtime):
@@ -214,6 +290,15 @@ def ensure_key() -> None:
         log("existing dbkey.secret reused")
         return
     if have:
+        with contextlib.suppress(OSError):
+            if KEY_PATH.read_text(encoding="utf-8").strip() not in known_keys():
+                remember_key(KEY_PATH.read_text(encoding="utf-8"), "existing")
+        return
+    stored = known_keys()
+    if stored:
+        WORK.mkdir(parents=True, exist_ok=True)
+        KEY_PATH.write_text(stored[0], encoding="utf-8")
+        log("restored dbkey.secret from key store")
         return
     raise LiteError(EXIT_NO_KEY, "DB 키(dbkey.secret)가 없습니다. 'teams-record-lite capture-key' 를 실행해 주세요.")
 
@@ -267,18 +352,6 @@ def do_refresh(timeout: float) -> dict:
         archive.parent.mkdir(parents=True, exist_ok=True)
         out_dir = WORK / "out"
         try:
-            log("[1/3] snapshot live DB")
-            for suffix in ("", "-wal", "-shm"):
-                src = Path(str(live) + suffix)
-                dst = WORK / ("snap.db" + suffix)
-                if src.is_file():
-                    shutil.copyfile(src, dst)
-                elif dst.exists():
-                    dst.unlink()
-            shutil.rmtree(out_dir, ignore_errors=True)
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-            log("[2/3] decrypt snapshot")
             env = dict(os.environ)
             env.update({
                 "ELECTRON_RUN_AS_NODE": "1",
@@ -287,12 +360,53 @@ def do_refresh(timeout: float) -> dict:
                 "TEAMS_RECORD_SQLITE_JS": str(APP_DIR / "sqlite3.js"),
                 "KNOX_ROOT": str(knox),
             })
-            remaining = timeout - (time.monotonic() - start)
-            out = run_step([str(knox / "KnoxTeams.exe"), str(APP_DIR / "decrypt_export.js")], env, remaining, "decrypt")
+            # 1.3.0: a failed decrypt is usually a snapshot taken while Knox Teams was writing, not a new key.
+            # Retry with a fresh snapshot, then try every key captured before, before asking for a capture.
+            original = current_key()
+            candidates = [original, original] + [k for k in known_keys() if k != original]
+            if LEGACY_KEY.is_file():
+                with contextlib.suppress(OSError):
+                    legacy = LEGACY_KEY.read_text(encoding="utf-8").strip()
+                    if legacy and legacy not in candidates:
+                        candidates.append(legacy)
             decrypted = out_dir / "teams-decrypted.db"
-            if "EXPORT_OK" not in out or not decrypted.is_file():
-                hint = "DB 키가 바뀌었을 수 있습니다. 'teams-record-lite capture-key' 로 다시 캡처해 주세요."
+            out, used = "", None
+            for attempt, key in enumerate(candidates, 1):
+                if not key:
+                    continue
+                remaining = timeout - (time.monotonic() - start)
+                if remaining < 15:
+                    break
+                if key != current_key():
+                    KEY_PATH.write_text(key, encoding="utf-8")
+                log(f"[1/3] snapshot live DB (attempt {attempt}/{len(candidates)})")
+                for suffix in ("", "-wal", "-shm"):
+                    src = Path(str(live) + suffix)
+                    dst = WORK / ("snap.db" + suffix)
+                    if src.is_file():
+                        shutil.copyfile(src, dst)
+                    elif dst.exists():
+                        dst.unlink()
+                shutil.rmtree(out_dir, ignore_errors=True)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                log("[2/3] decrypt snapshot")
+                out = run_step([str(knox / "KnoxTeams.exe"), str(APP_DIR / "decrypt_export.js")], env, remaining, "decrypt")
+                if "EXPORT_OK" in out and decrypted.is_file():
+                    used = key
+                    break
+                log("decrypt failed: " + out.strip().splitlines()[0][:200] if out.strip() else "decrypt failed")
+                if attempt == 1:
+                    time.sleep(2)
+            if used is None:
+                if original:
+                    KEY_PATH.write_text(original, encoding="utf-8")
+                tried = len({k for k in candidates if k})
+                hint = (f"저장된 DB 키 {tried}개로 모두 복호화하지 못했습니다. Knox Teams 의 DB 키가 바뀐 것으로 보입니다. "
+                        "'teams-record-lite capture-key' 로 다시 캡처해 주세요.")
                 raise LiteError(EXIT_REFRESH_FAILED, "복호화에 실패했습니다. " + hint, out[-2000:])
+            if used != original:
+                log("switched to a previously captured key")
+            remember_key(used, "refresh")
 
             log("[3/3] merge into archive")
             remaining = timeout - (time.monotonic() - start)
@@ -475,10 +589,18 @@ def kill_knox() -> bool:
 
 
 def start_knox(knox: Path) -> None:
+    """1.3.0: start Knox Teams through Explorer, the same way as a double-click, so it runs in the normal
+    desktop context (visible window, usual auto sign-in) instead of under a background agent's process tree."""
     if os.name != "nt":
         return
+    exe = str(knox / "KnoxTeams.exe")
+    try:
+        subprocess.Popen(["explorer.exe", exe], close_fds=True)
+        return
+    except OSError as exc:
+        log(f"explorer start failed ({exc}); starting directly")
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    subprocess.Popen([str(knox / "KnoxTeams.exe")], cwd=str(knox), creationflags=flags, close_fds=True)
+    subprocess.Popen([exe], cwd=str(knox), creationflags=flags, close_fds=True)
 
 
 def do_capture_key(timeout: float) -> dict:
@@ -504,6 +626,7 @@ def do_capture_key(timeout: float) -> dict:
             raise LiteError(EXIT_NO_KEY, "DB 키를 캡처하지 못했습니다. Knox Teams 로그인 상태를 확인해 주세요.",
                             text[-1500:])
         KEY_PATH.write_text(found[-1], encoding="utf-8")
+        remember_key(found[-1], "capture")
     finally:
         # the spawned instance is attached to frida; restart a clean one either way
         kill_knox()
@@ -541,7 +664,7 @@ def main(argv=None) -> int:
     p.add_argument("--check", action="store_true", help="only check, do not download")
     p.add_argument("--rollback", action="store_true", help="restore the previous version on next run")
     p = sub.add_parser("capture-key", help="restart Knox Teams and capture the DB key")
-    p.add_argument("--timeout", type=float, default=120)
+    p.add_argument("--timeout", type=float, default=180)
     args = parser.parse_args(argv)
 
     with contextlib.suppress(Exception):

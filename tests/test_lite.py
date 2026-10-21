@@ -21,6 +21,7 @@ def trlite(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.delenv("KNOX_ROOT", raising=False)
+    monkeypatch.setenv("TRLITE_KEYSTORE", str(tmp_path / "keys" / "keys.json"))
     import trlite as mod
     mod = importlib.reload(mod)
     return mod

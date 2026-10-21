@@ -58,7 +58,7 @@ try:
     sc.load()
     frida.resume(pid)
     log('resumed %s' % time.strftime('%H:%M:%S'))
-    for _ in range(45):
+    for _ in range(int(os.environ.get('TEAMS_RECORD_KEY_WAIT') or 90)):   # 1.3.0: 45 s was too short when sign-in is slow
         time.sleep(1)
         if got['key']:
             log('=== KEY captured, stop early %s ===' % time.strftime('%H:%M:%S'))
