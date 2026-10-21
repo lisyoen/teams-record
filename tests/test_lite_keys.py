@@ -1,4 +1,4 @@
-"""1.3.0: captured DB keys are kept in a store outside the install folder; refresh retries and falls back to them."""
+"""1.3.1: captured DB keys are kept in a store outside the install folder; refresh retries and falls back to them."""
 import importlib
 import json
 import sys

@@ -54,7 +54,7 @@ Knox Teams 메신저의 로컬 대화 DB 를 읽어 누적 보관용 SQLite 아�
 
 `url` 은 절대 주소 또는 매니페스트 기준 상대 경로입니다. 사내 HTTP 서버에 올릴 때는 `python lite/build_lite_zip.py --base-url http://<서버>/<경로>/` 로 만든 zip 과 매니페스트를 같은 폴더에 두면 됩니다.
 
-## DB 키 (1.3.0)
+## DB 키 (1.3.1)
 
 - `capture-key` 로 캡처한 키는 설치 폴더 밖 보관함에도 저장됩니다. 설치 폴더의 키가 없어지면 보관함에서 복원합니다.
 - `refresh` 가 복호화에 실패하면 새 스냅샷으로 한 번 더 시도하고(Knox Teams 가 DB 를 쓰는 순간 복사된 경우), 그래도 안 되면 보관함의 이전 키와 Teams Viewer 의 키를 차례로 시도합니다. 모두 실패할 때만 `error_code` 4 와 함께 다시 캡처하라고 안내합니다.
@@ -70,5 +70,5 @@ Knox Teams 메신저의 로컬 대화 DB 를 읽어 누적 보관용 SQLite 아�
 |---|---|
 | `data\teams-archive.db` | 누적 대화 아카이브 (평문 SQLite, 외부 반출 주의) |
 | `work\dbkey.secret` | Knox Teams DB 키 (외부 반출 금지) |
-| `%LOCALAPPDATA%\teams-record-keys\keys.json` | 캡처한 DB 키 보관함 (1.3.0, Windows DPAPI 로 현재 사용자만 복호화, 최근 10개). 업데이트·재설치해도 남아 다시 캡처하지 않아도 됩니다 |
+| `%LOCALAPPDATA%\teams-record-keys\keys.json` | 캡처한 DB 키 보관함 (1.3.1, Windows DPAPI 로 현재 사용자만 복호화, 최근 10개). 업데이트·재설치해도 남아 다시 캡처하지 않아도 됩니다 |
 | `logs\` | 설치·갱신·업데이트 로그 |

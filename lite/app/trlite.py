@@ -43,7 +43,7 @@ STATE_PATH = ROOT / "state.json"
 ARCHIVE = DATA / "teams-archive.db"
 KEY_PATH = WORK / "dbkey.secret"
 LEGACY_KEY = Path(os.path.expanduser("~")) / "teams-record-work" / "dbkey.secret"
-# 1.3.0: every captured key is kept outside the install folder (survives updates and reinstalls),
+# 1.3.1: every captured key is kept outside the install folder (survives updates and reinstalls),
 # protected with Windows DPAPI for the current user. Refresh tries these before asking for a new capture.
 KEYSTORE = Path(os.environ.get("TRLITE_KEYSTORE") or Path(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")) / "teams-record-keys" / "keys.json")
 KEYSTORE_MAX = 10
@@ -360,7 +360,7 @@ def do_refresh(timeout: float) -> dict:
                 "TEAMS_RECORD_SQLITE_JS": str(APP_DIR / "sqlite3.js"),
                 "KNOX_ROOT": str(knox),
             })
-            # 1.3.0: a failed decrypt is usually a snapshot taken while Knox Teams was writing, not a new key.
+            # 1.3.1: a failed decrypt is usually a snapshot taken while Knox Teams was writing, not a new key.
             # Retry with a fresh snapshot, then try every key captured before, before asking for a capture.
             original = current_key()
             candidates = [original, original] + [k for k in known_keys() if k != original]
@@ -589,7 +589,7 @@ def kill_knox() -> bool:
 
 
 def start_knox(knox: Path) -> None:
-    """1.3.0: start Knox Teams through Explorer, the same way as a double-click, so it runs in the normal
+    """1.3.1: start Knox Teams through Explorer, the same way as a double-click, so it runs in the normal
     desktop context (visible window, usual auto sign-in) instead of under a background agent's process tree."""
     if os.name != "nt":
         return
