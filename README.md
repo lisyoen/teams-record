@@ -15,6 +15,10 @@ Knox Teams(삼성SDS 사내 메신저)의 짧은 로컬 대화 보관 기간을 
 - 지원되는 대화의 읽음 상태 표시
 - 버전 표시와 자동 업데이트
 
+## Teams Record Lite (CLI 전용 경량판)
+
+뷰어 없이 Knox Teams 대화 DB 만 읽어 누적 아카이브를 갱신하는 경량 패키지입니다. 외부 에이전트가 CLI 로 호출하는 용도이며, Release 의 `teams-record-lite-v<버전>.zip` 을 받아 `install.bat` 을 실행하면 관리자 권한 없이 설치되고 이후 자동 업데이트됩니다. 자세한 내용은 [`lite/README.md`](lite/README.md), 에이전트 연동은 [`lite/AGENT.md`](lite/AGENT.md) 를 참고하세요.
+
 ## 구성
 
 - `viewer/`: Python 표준 라이브러리 기반 로컬 웹 뷰어. `127.0.0.1:8799`에만 바인딩합니다.

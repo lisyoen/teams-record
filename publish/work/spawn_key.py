@@ -1,6 +1,6 @@
 import frida, os, time
 
-WORK = os.path.join(os.path.expanduser('~'), 'teams-record-work')
+WORK = os.environ.get('TEAMS_RECORD_WORK') or os.path.join(os.path.expanduser('~'), 'teams-record-work')
 LOG = os.path.join(WORK, 'key_spawn.log')
 EXE = os.path.join(os.environ.get('KNOX_ROOT', r'C:\mySingle\KnoxTeams'), 'KnoxTeams.exe')
 

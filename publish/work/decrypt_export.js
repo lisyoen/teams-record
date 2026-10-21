@@ -1,6 +1,6 @@
 const path=require('path'), fs=require('fs');
-const WORK=path.join(process.env.USERPROFILE,'teams-record-work');
-const sqlite3=require(path.join(WORK,'sqlite3.js')).verbose();
+const WORK=process.env.TEAMS_RECORD_WORK||path.join(process.env.USERPROFILE,'teams-record-work');
+const sqlite3=require(process.env.TEAMS_RECORD_SQLITE_JS||path.join(WORK,'sqlite3.js')).verbose();
 const key=fs.readFileSync(path.join(WORK,'dbkey.secret'),'utf8').trim();
 const SRC=path.join(WORK,'snap.db');
 const OUTDIR=process.env.TEAMS_DB_DIR;
@@ -23,7 +23,7 @@ db.serialize(()=>{
   });
 });
 function verify(){
-  const v=new sqlite3.Database(OUT, sqlite3.OPEN_READONLY,(err)=>{if(err){console.log('VERIFY_OPEN_ERR(암호아직걸림?) '+err.message);process.exit(1);}});
+  const v=new sqlite3.Database(OUT, sqlite3.OPEN_READONLY,(err)=>{if(err){console.log('VERIFY_OPEN_ERR(still-encrypted?) '+err.message);process.exit(1);}});
   v.serialize(()=>{
     v.all("SELECT type,name FROM sqlite_master WHERE type IN ('table','view') ORDER BY type,name",(e,rows)=>{
       if(e){console.log('VERIFY_ERR '+e.message);return;}

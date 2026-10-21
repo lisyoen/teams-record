@@ -37,3 +37,4 @@ teams-archive.db
 *.b64
 boot.json
 thumbs/
+lite/dist/
