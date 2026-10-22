@@ -682,8 +682,31 @@ def write_diag(name: str, lines: list) -> Path | None:
         return None
 
 
+class RunningDiag(list):
+    """1.3.4: every line is also written to logs/<name>-running.log right away, so a run that is killed from outside
+    (the caller's time limit) still leaves its trail. The file is removed when the run writes its final log."""
+    def __init__(self, name: str, lines: list):
+        super().__init__(lines); self.path = LOGS / f"{name}-running.log"; self._flush()
+    def _flush(self):
+        with contextlib.suppress(OSError):
+            LOGS.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(mask_keys("\n".join(self)) + "\n", encoding="utf-8")
+    def append(self, item):
+        super().append(f"[{time.strftime('%H:%M:%S')}] {item}" if not str(item).startswith(("---", "===")) else item); self._flush()
+    def __iadd__(self, items):
+        super().extend(items); self._flush(); return self
+    def done(self):
+        with contextlib.suppress(OSError):
+            self.path.unlink()
+
+
 def recent_logs(name: str, last: int) -> dict:
     files = sorted(LOGS.glob(f"{name}-*.log"))[-max(1, min(int(last), DIAG_KEEP)):] if LOGS.is_dir() else []
+    exact = LOGS / f"{name}.log"   # e.g. update.log
+    if exact.is_file():
+        lines = exact.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+        return {"ok": True, "at": now_iso(), "error_code": EXIT_OK, "message": f"{name}.log 마지막 {len(lines)}줄",
+                "logs": [{"file": exact.name, "text": mask_keys("\n".join(lines))}] + [{"file": f.name, "text": mask_keys(f.read_text(encoding="utf-8", errors="replace"))} for f in files]}
     items = [{"file": f.name, "text": mask_keys(f.read_text(encoding="utf-8", errors="replace"))} for f in files]
     return {"ok": True, "at": now_iso(), "error_code": EXIT_OK, "logs": items,
             "message": f"{name} 진단 로그 {len(items)}건" if items else f"{name} 진단 로그가 없습니다."}
@@ -744,7 +767,16 @@ def do_capture_key(timeout: float) -> dict:
     # 1.3.3: the whole capture must finish well inside the caller's limit (Skipper Mate stops a command at 300 s)
     key_wait = os.environ.get("TEAMS_RECORD_KEY_WAIT") or str(int(max(30, min(120, timeout - 30))))
     mode = capture_mode()
-    diag = [f"=== capture-key {now_iso()} (teams-record-lite {read_version()}) ==="]
+    diag = RunningDiag("capture-key", [f"=== capture-key {now_iso()} (teams-record-lite {read_version()}) ==="])
+    # 1.3.4: never outlive the caller — leave a log and stop before the caller's limit even if something hangs
+    def _watchdog():
+        diag.append(f"WATCHDOG: still running after {timeout + 20:.0f}s, stopping (last step above)")
+        write_diag("capture-key", list(diag)); diag.done()
+        emit({"ok": False, "at": now_iso(), "error_code": EXIT_TIMEOUT, "message": "키 캡처가 시간 안에 끝나지 않았습니다.",
+              "detail": mask_keys("\n".join(diag))[-12000:]})
+        sys.stdout.flush(); os._exit(EXIT_TIMEOUT)
+    import threading
+    watchdog = threading.Timer(timeout + 20, _watchdog); watchdog.daemon = True; watchdog.start()
     diag += _session_info()
     diag.append(f"knox_root={knox} exe_exists={(knox / 'KnoxTeams.exe').exists()} timeout={timeout} key_wait={key_wait}s mode={mode}")
     diag += ["--- Knox processes before ---", _knox_processes()]
@@ -789,22 +821,28 @@ def do_capture_key(timeout: float) -> dict:
         update_state(last_capture_mode=mode, last_capture_ok=True, last_refresh_needs_key=False)
         diag.append("result: key captured")
         ok = True
-    except LiteError as exc:
+    except Exception as exc:
         update_state(last_capture_mode=mode, last_capture_ok=False)
-        path = write_diag("capture-key", diag)
-        exc.detail = (f"진단 로그: {path}\n" if path else "") + mask_keys("\n".join(diag))[-12000:]
+        if not isinstance(exc, LiteError):
+            diag.append(f"ERROR {type(exc).__name__}: {exc}")
+        path = write_diag("capture-key", list(diag))
+        if isinstance(exc, LiteError):
+            exc.detail = (f"진단 로그: {path}\n" if path else "") + mask_keys("\n".join(diag))[-12000:]
         raise
     finally:
         # spawn mode: that instance ran under frida, so restart a clean one either way.
         # attach mode (1.3.3): Knox Teams was started normally and frida has detached — leave the user's window alone,
         # unless it is not running at all.
         if mode == "spawn" or not knox_running():
+            diag.append("restarting Knox Teams (clean instance)")
             kill_knox()
             time.sleep(1)
             start_knox(knox)
         with contextlib.suppress(OSError):
             log_path.unlink()
-    path = write_diag("capture-key", diag) if ok else None
+        watchdog.cancel()
+        diag.done()
+    path = write_diag("capture-key", list(diag)) if ok else None
     return {"ok": True, "at": now_iso(), "key_path": str(KEY_PATH), "knox_restarted": os.name == "nt",
             "knox_was_running": killed, "error_code": EXIT_OK, "message": "DB 키를 캡처했습니다.",
             "log_path": str(path) if path else None}

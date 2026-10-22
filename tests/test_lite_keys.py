@@ -139,3 +139,21 @@ def test_status_reports_needs_key(trlite):
     trlite.WORK.mkdir(parents=True, exist_ok=True); trlite.KEY_PATH.write_text("x'k'", encoding="utf-8")
     trlite.update_state(last_refresh_needs_key=False)
     assert trlite.do_status()["needs_key"] is False
+
+
+def test_running_log_survives_and_watchdog_logs(trlite, monkeypatch):
+    """1.3.4: lines reach logs/capture-key-running.log immediately; the final log replaces it."""
+    d = trlite.RunningDiag("capture-key", ["=== start ==="])
+    d.append("kill_knox -> True")
+    text = (trlite.LOGS / "capture-key-running.log").read_text(encoding="utf-8")
+    assert "kill_knox -> True" in text and "=== start ===" in text
+    d += ["PRAGMA key = 'x''secret'"]
+    assert "secret" not in (trlite.LOGS / "capture-key-running.log").read_text(encoding="utf-8")
+    assert trlite.recent_logs("capture-key", 1)["logs"][-1]["file"] == "capture-key-running.log"
+    d.done(); assert not (trlite.LOGS / "capture-key-running.log").exists()
+
+
+def test_logs_update_log_tail(trlite):
+    trlite.append_log("update.log", "staged 1.3.4 (current 1.2.0)")
+    out = trlite.recent_logs("update", 1)
+    assert out["logs"][0]["file"] == "update.log" and "staged 1.3.4" in out["logs"][0]["text"]
