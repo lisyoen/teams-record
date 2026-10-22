@@ -157,3 +157,8 @@ def test_logs_update_log_tail(trlite):
     trlite.append_log("update.log", "staged 1.3.4 (current 1.2.0)")
     out = trlite.recent_logs("update", 1)
     assert out["logs"][0]["file"] == "update.log" and "staged 1.3.4" in out["logs"][0]["text"]
+
+
+def test_intranet_hosts_skip_proxy(trlite):
+    assert trlite.is_direct_host("172.21.114.72") and trlite.is_direct_host("10.0.0.5") and trlite.is_direct_host("spark2")
+    assert not trlite.is_direct_host("github.com") and not trlite.is_direct_host("skipper.craftbay.io")

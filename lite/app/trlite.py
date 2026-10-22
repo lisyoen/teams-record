@@ -492,9 +492,27 @@ def do_status() -> dict:
 
 
 # ------------------------------------------------------------------- update
+def is_direct_host(host: str) -> bool:
+    """1.3.5: intranet hosts (private/loopback IPs, single-label names) are fetched without the system proxy —
+    a company proxy usually cannot reach an internal Skipper, which kept PCs on an old build."""
+    import ipaddress
+    host = (host or "").strip("[]").lower()
+    if not host:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        return "." not in host or host.endswith((".local", ".localhost", ".internal", ".lan", ".corp"))
+
+
 def http_get(url: str, timeout: float = 60) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "teams-record-lite"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # honours system/env proxies
+    if is_direct_host(urllib.parse.urlsplit(url).hostname or ""):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=timeout) as resp:
+            return resp.read()
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # public hosts honour system/env proxies
         return resp.read()
 
 
