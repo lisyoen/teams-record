@@ -160,6 +160,61 @@ def test_status_reads_archive_read_only(trlite, capsys):
     assert out["archive"]["last_merge"] == "2026-10-21 10:00:00"
 
 
+def _prep_verify(trlite, monkeypatch):
+    """shared setup for verify-key: a live DB path, a knox root, and a stored key."""
+    trlite.WORK.mkdir(parents=True, exist_ok=True)
+    live = trlite.WORK / "live.db"; live.write_bytes(b"enc")
+    monkeypatch.setattr(trlite, "find_live_db", lambda: live)
+    monkeypatch.setattr(trlite, "find_knox_root", lambda c: trlite.WORK)
+    trlite.KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    trlite.KEY_PATH.write_text("x'cur'", encoding="utf-8")
+
+
+def test_verify_key_valid(trlite, monkeypatch, capsys):
+    _prep_verify(trlite, monkeypatch)
+    def fake_step(cmd, env, timeout, label):
+        Path(env["TEAMS_DB_DIR"]).mkdir(parents=True, exist_ok=True)
+        (Path(env["TEAMS_DB_DIR"]) / "teams-decrypted.db").write_bytes(b"ok")
+        return "EXPORT_OK"
+    monkeypatch.setattr(trlite, "run_step", fake_step)
+    assert trlite.main(["verify-key"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["key_valid"] is True and out["needs_key"] is False
+    assert trlite.load_state().get("last_refresh_needs_key") is False
+
+
+def test_verify_key_stale_switches_to_stored(trlite, monkeypatch, capsys):
+    """the current key fails but an older stored key decrypts: verify adopts it, no re-capture needed."""
+    _prep_verify(trlite, monkeypatch)
+    trlite.remember_key("x'good'", "test")  # a previously captured key
+    def fake_step(cmd, env, timeout, label):
+        key = trlite.KEY_PATH.read_text(encoding="utf-8").strip()
+        if key == "x'good'":
+            Path(env["TEAMS_DB_DIR"]).mkdir(parents=True, exist_ok=True)
+            (Path(env["TEAMS_DB_DIR"]) / "teams-decrypted.db").write_bytes(b"ok")
+            return "EXPORT_OK"
+        return "ATTACH_ERR SQLITE_NOTADB"
+    monkeypatch.setattr(trlite, "run_step", fake_step)
+    assert trlite.main(["verify-key"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["key_valid"] is True
+    assert trlite.KEY_PATH.read_text(encoding="utf-8").strip() == "x'good'"
+
+
+def test_verify_key_stale_needs_capture(trlite, monkeypatch, capsys):
+    """no stored key decrypts: verify reports needs_key and sets last_refresh_needs_key so status agrees."""
+    _prep_verify(trlite, monkeypatch)
+    monkeypatch.setattr(trlite, "run_step", lambda *a, **k: "ATTACH_ERR SQLITE_NOTADB")
+    assert trlite.main(["verify-key"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["key_valid"] is False and out["needs_key"] is True
+    assert trlite.KEY_PATH.read_text(encoding="utf-8").strip() == "x'cur'"  # restored original
+    state = trlite.load_state()
+    assert state.get("last_refresh_needs_key") is True
+    status = trlite.do_status()
+    assert status["needs_key"] is True
+
+
 def test_stage_update_rejects_sha_mismatch(trlite):
     trlite.ROOT.mkdir(parents=True, exist_ok=True)
     with pytest.raises(trlite.LiteError) as e:

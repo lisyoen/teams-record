@@ -437,6 +437,82 @@ def do_refresh(timeout: float) -> dict:
     }
 
 
+# ------------------------------------------------------------- verify key
+def do_verify_key(timeout: float) -> dict:
+    """1.3.6: check whether the stored DB key can still decrypt the live DB, without merging.
+    'status' only knows a key file exists; after Knox Teams re-logs in the key changes but the file stays,
+    so a refresh fails with NOTADB. Skipper's 상태 확인 calls this to catch a stale key up front and offer
+    a re-capture before the user ever tries to read a conversation. On failure it records last_refresh_needs_key
+    so 'status' reports needs_key=True too."""
+    config = load_config()
+    start = time.monotonic()
+    with file_lock(WORK / "refresh.lock", timeout):
+        knox = find_knox_root(config)
+        ensure_key()
+        live = find_live_db()
+        WORK.mkdir(parents=True, exist_ok=True)
+        out_dir = WORK / "verify-out"
+        env = dict(os.environ)
+        env.update({
+            "ELECTRON_RUN_AS_NODE": "1",
+            "TEAMS_DB_DIR": str(out_dir),
+            "TEAMS_RECORD_WORK": str(WORK),
+            "TEAMS_RECORD_SQLITE_JS": str(APP_DIR / "sqlite3.js"),
+            "KNOX_ROOT": str(knox),
+        })
+        original = current_key()
+        candidates = [original] + [k for k in known_keys() if k != original]
+        if LEGACY_KEY.is_file():
+            with contextlib.suppress(OSError):
+                legacy = LEGACY_KEY.read_text(encoding="utf-8").strip()
+                if legacy and legacy not in candidates:
+                    candidates.append(legacy)
+        decrypted = out_dir / "teams-decrypted.db"
+        out, used = "", None
+        try:
+            for attempt, key in enumerate(candidates, 1):
+                if not key:
+                    continue
+                remaining = timeout - (time.monotonic() - start)
+                if remaining < 12:
+                    break
+                if key != current_key():
+                    KEY_PATH.write_text(key, encoding="utf-8")
+                for suffix in ("", "-wal", "-shm"):
+                    src = Path(str(live) + suffix)
+                    dst = WORK / ("snap.db" + suffix)
+                    if src.is_file():
+                        shutil.copyfile(src, dst)
+                    elif dst.exists():
+                        dst.unlink()
+                shutil.rmtree(out_dir, ignore_errors=True)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out = run_step([str(knox / "KnoxTeams.exe"), str(APP_DIR / "decrypt_export.js")], env, remaining, "verify")
+                if "EXPORT_OK" in out and decrypted.is_file():
+                    used = key
+                    break
+        finally:
+            for name in ("snap.db", "snap.db-wal", "snap.db-shm"):
+                with contextlib.suppress(OSError):
+                    (WORK / name).unlink()
+            shutil.rmtree(out_dir, ignore_errors=True)
+        if used is None:
+            if original:
+                KEY_PATH.write_text(original, encoding="utf-8")
+            update_state(last_refresh_ok=False, last_refresh_error_code=EXIT_NO_KEY, last_refresh_needs_key=True)
+            tried = len({k for k in candidates if k})
+            return {"ok": True, "at": now_iso(), "key_valid": False, "needs_key": True, "keys_tried": tried,
+                    "error_code": EXIT_OK,
+                    "message": f"저장된 DB 키 {tried}개로 라이브 DB 를 복호화하지 못했습니다. 키를 다시 캡처해 주세요."}
+        if used != original:
+            KEY_PATH.write_text(used, encoding="utf-8")
+            remember_key(used, "verify")
+            log("verify: switched to a previously captured key")
+        update_state(last_refresh_needs_key=False)
+        return {"ok": True, "at": now_iso(), "key_valid": True, "needs_key": False,
+                "error_code": EXIT_OK, "message": "DB 키가 유효합니다."}
+
+
 # ------------------------------------------------------------------- status
 def archive_summary() -> dict:
     archive = archive_file()
@@ -893,6 +969,8 @@ def main(argv=None) -> int:
     p.add_argument("--rollback", action="store_true", help="restore the previous version on next run")
     p = sub.add_parser("capture-key", help="restart Knox Teams and capture the DB key")
     p.add_argument("--timeout", type=float, default=150)
+    p = sub.add_parser("verify-key", help="check the stored DB key can still decrypt the live DB (no merge)")
+    p.add_argument("--timeout", type=float, default=90)
     p = sub.add_parser("logs", help="print recent diagnostic logs (key values masked)")
     p.add_argument("--name", default="capture-key")
     p.add_argument("--last", type=int, default=1)
@@ -921,6 +999,9 @@ def main(argv=None) -> int:
             return EXIT_OK
         if args.command == "capture-key":
             emit(do_capture_key(args.timeout))
+            return EXIT_OK
+        if args.command == "verify-key":
+            emit(do_verify_key(args.timeout))
             return EXIT_OK
         if args.command == "logs":
             emit(recent_logs(re.sub(r"[^a-z0-9-]", "", args.name.lower()) or "capture-key", args.last))
